@@ -1,8 +1,8 @@
 app_name = "pick_stream"
 app_title = "Pick Stream"
-app_publisher = "i"
-app_description = "i"
-app_email = "i@i.i"
+app_publisher = "Jollys Pharmacy Ltd."
+app_description = "A robust, efficient, and accurate inventory management module that simplifies the replenishment process, reduces errors, and enhances operational efficiency across stores."
+app_email = "cdgrant@jollysonline.com"
 app_license = "mit"
 # required_apps = []
 
