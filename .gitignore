@@ -5,3 +5,7 @@
 tags
 node_modules
 __pycache__
+
+pick_stream/public/frontend
+pick_stream/public/node_modules
+pick_stream/www/pick_stream.html

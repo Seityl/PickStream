@@ -230,3 +230,5 @@ doc_events = {
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
+
+website_route_rules =[{'from_route': '/pick_stream/<path:app_path>', 'to_route': 'pick_stream'},]

@@ -10,7 +10,7 @@ frappe.listview_settings['Crate'] = {
 			"Verifying":"purple"
 		};
 		return [__(doc.status), status_colors[doc.status], "status,=,"+doc.status];
-	},
+	}
 }
 
 function extend_listview_event(doctype, event, callback) {
