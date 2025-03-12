@@ -1,0 +1,149 @@
+{
+ "actions": [],
+ "allow_copy": 1,
+ "allow_rename": 1,
+ "autoname": "field:crate_code",
+ "creation": "2025-01-22 14:38:08.409240",
+ "default_view": "List",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "engine": "InnoDB",
+ "field_order": [
+  "crate_details_section",
+  "crate_code",
+  "color",
+  "column_break_ouyc",
+  "status",
+  "section_break_zwkq",
+  "from_warehouse",
+  "to_warehouse",
+  "column_break_fdeu",
+  "stream",
+  "item_group",
+  "section_break_ftoz",
+  "items"
+ ],
+ "fields": [
+  {
+   "allow_in_quick_entry": 1,
+   "fieldname": "color",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Crate Color",
+   "options": "Green\nGray\nRed\nYellow\nBlue",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "allow_in_quick_entry": 1,
+   "fieldname": "crate_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Crate Code",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "section_break_zwkq",
+   "fieldtype": "Section Break",
+   "hide_border": 1,
+   "label": "Live Details"
+  },
+  {
+   "default": "Available",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Available\nPicking\nWaiting\nIn Transit\nVerifying",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "crate_details_section",
+   "fieldtype": "Section Break",
+   "label": "Crate Details"
+  },
+  {
+   "fieldname": "to_warehouse",
+   "fieldtype": "Link",
+   "label": "To Warehouse",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "from_warehouse",
+   "fieldtype": "Link",
+   "label": "From Parent Warehouse",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ouyc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_fdeu",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_ftoz",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Items In Crate",
+   "options": "Crate Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stream",
+   "fieldtype": "Link",
+   "label": "Stream",
+   "options": "Stream",
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_group",
+   "fieldtype": "Link",
+   "label": "Item Group",
+   "options": "Item Group",
+   "read_only": 1
+  }
+ ],
+ "force_re_route_to_default_view": 1,
+ "hide_toolbar": 1,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-01-24 16:37:53.619900",
+ "modified_by": "Administrator",
+ "module": "Pick Stream",
+ "name": "Crate",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "crate_code, color",
+ "show_name_in_global_search": 1,
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "crate_code"
+}

@@ -1,0 +1,30 @@
+[
+    {
+        "doctype": "Custom Field",
+        "dt": "User Group",
+        "module": "Core",
+        "name": "User Group-is_item_group",
+        "fieldname": "custom_is_item_group",
+        "fieldtype": "Check",
+        "length": 0,
+        "is_system_generated": 1,
+        "hidden": 1,
+        "print_hide": 1,
+        "read_only": 1,
+        "insert_after": "user_group_members"
+    },
+    {
+        "doctype": "Custom Field",
+        "dt": "Material Request",
+        "module": "Stock",
+        "name": "Material Request-assign_warehouse_staff",
+        "fieldname": "custom_assign_warehouse_staff",
+        "fieldtype": "Check",
+        "label": "Assign to Warehouse Staff",
+        "default": 0,
+        "is_system_generated": 1,
+        "print_hide": 1,
+        "read_only": 1,
+        "insert_after": "schedule_date"
+    }
+]

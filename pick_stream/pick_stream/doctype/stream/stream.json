@@ -1,0 +1,205 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 1,
+ "autoname": "format:PICK-STR-{YYYY}-{######}",
+ "creation": "2025-01-22 14:35:43.159862",
+ "default_view": "List",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "engine": "InnoDB",
+ "field_order": [
+  "stream_details_section",
+  "crate_code",
+  "material_request",
+  "column_break_kdhd",
+  "item_group",
+  "warehouse_details_section",
+  "from_warehouse",
+  "column_break_ovxs",
+  "to_warehouse",
+  "item_details_section",
+  "items",
+  "more_info_tab",
+  "amended_from",
+  "status",
+  "section_break_psmj",
+  "is_waiting",
+  "is_transit",
+  "is_verifying",
+  "is_completed",
+  "connections_tab"
+ ],
+ "fields": [
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Stream",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "connections_tab",
+   "fieldtype": "Tab Break",
+   "label": "Connections",
+   "show_dashboard": 1
+  },
+  {
+   "fieldname": "more_info_tab",
+   "fieldtype": "Tab Break",
+   "label": "More Info"
+  },
+  {
+   "fieldname": "crate_code",
+   "fieldtype": "Link",
+   "in_filter": 1,
+   "label": "Crate Code",
+   "options": "Crate",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "material_request",
+   "fieldtype": "Link",
+   "label": "Material Request",
+   "options": "Material Request",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_group",
+   "fieldtype": "Link",
+   "in_filter": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Item Group",
+   "options": "Item Group",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "from_warehouse",
+   "fieldtype": "Link",
+   "in_filter": 1,
+   "label": "From Parent Warehouse",
+   "options": "Warehouse",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_warehouse",
+   "fieldtype": "Link",
+   "in_filter": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "To Warehouse",
+   "options": "Warehouse",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "stream_details_section",
+   "fieldtype": "Section Break",
+   "label": "Stream Details"
+  },
+  {
+   "fieldname": "column_break_kdhd",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "warehouse_details_section",
+   "fieldtype": "Section Break",
+   "label": "Warehouse Details"
+  },
+  {
+   "fieldname": "column_break_ovxs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "item_details_section",
+   "fieldtype": "Section Break",
+   "label": "Item Details"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Items",
+   "options": "Source Item",
+   "read_only": 1
+  },
+  {
+   "default": "Picking",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Picking\nWaiting\nIn Transit\nVerifying\nCompleted",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_psmj",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_waiting",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Is Waiting"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_transit",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Is Transit"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_verifying",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Is Verifying"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_completed",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Is Completed"
+  }
+ ],
+ "force_re_route_to_default_view": 1,
+ "in_create": 1,
+ "links": [],
+ "modified": "2025-02-28 14:23:49.196511",
+ "modified_by": "Administrator",
+ "module": "Pick Stream",
+ "name": "Stream",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "crate_code, item_group, to_warehouse",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "to_warehouse",
+ "track_changes": 1
+}

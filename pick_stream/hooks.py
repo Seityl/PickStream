@@ -1,6 +1,8 @@
+from . import __version__ as app_version
+
 app_name = "pick_stream"
 app_title = "Pick Stream"
-app_publisher = "Jollys Pharmacy Ltd."
+app_publisher = "Jollys Pharmacy Limited"
 app_description = "A robust, efficient, and accurate inventory management module that simplifies the replenishment process, reduces errors, and enhances operational efficiency across stores."
 app_email = "cdgrant@jollysonline.com"
 app_license = "mit"
@@ -28,7 +30,9 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+
+doctype_js = {"Material Request" : "public/js/custom_Material Request.js"}
+
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -69,6 +73,8 @@ app_license = "mit"
 
 # before_install = "pick_stream.install.before_install"
 # after_install = "pick_stream.install.after_install"
+
+after_migrate = "pick_stream.install.after_install"
 
 # Uninstallation
 # ------------
@@ -122,13 +128,11 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+    'Material Request': {
+        'on_submit': 'pick_stream.core.assign_users_to_mr'
+    }
+}
 
 # Scheduled Tasks
 # ---------------
@@ -226,4 +230,3 @@ app_license = "mit"
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
-
