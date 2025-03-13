@@ -11,7 +11,6 @@ from pick_stream.api_utils import generate_response, exception_handler, generate
 from pick_stream.core import get_material_request_item_groups_view_details
 from pick_stream.core import get_material_request_item_group_view_details
 from pick_stream.core import get_material_request_picking_view_details
-from pick_stream.core import get_material_request_items_details
 from pick_stream.core import check_item_against_barcode
 from pick_stream.core import get_user_material_requests
 from pick_stream.core import check_crate_availability
@@ -125,8 +124,8 @@ def validate_item_against_barcode(item_code:str, barcode:str) -> dict:
 def get_material_request_list_view(user:str) -> dict:
     """Retrieve material request list view details for the specified user"""
     try:
-        user_material_requests = get_user_material_requests(user)
-        return generate_response(200, None, user_material_requests)
+        view_details = get_user_material_requests(user)
+        return generate_response(200, None, view_details)
 
     except Exception as e:
         frappe.response = exception_handler(e)   
@@ -137,8 +136,8 @@ def get_material_request_list_view(user:str) -> dict:
 def get_material_request_available_item_groups_view(user:str, mr_name:str) -> dict:
     """Retrieve available item groups view for Material Request assigned to the specified user"""
     try:
-        mr_details = get_material_request_item_groups_view_details(mr_name, user)
-        return generate_response(200, None, mr_details)
+        view_details = get_material_request_item_groups_view_details(mr_name, user)
+        return generate_response(200, None, view_details)
 
     except Exception as e:
         frappe.response = exception_handler(e)   
@@ -149,8 +148,8 @@ def get_material_request_available_item_groups_view(user:str, mr_name:str) -> di
 def get_material_request_item_group_view(user:str, mr_name:str, item_group:str) -> dict:
     """Retrieve item group view for Material Request based on the specified user and item group"""
     try:
-        mr_details = get_material_request_item_group_view_details(mr_name, user, item_group)
-        return generate_response(200, None, mr_details)
+        view_details = get_material_request_item_group_view_details(mr_name, user, item_group)
+        return generate_response(200, None, view_details)
 
     except Exception as e:
         frappe.response = exception_handler(e)   
@@ -161,8 +160,8 @@ def get_material_request_item_group_view(user:str, mr_name:str, item_group:str) 
 def get_material_request_picking_view(user:str, mr_name:str, item_group:str) -> dict:
     """Retrieve picking view for Material Request based on the specified user and item group"""
     try:
-        mr_details = get_material_request_picking_view_details(mr_name, user, item_group)
-        return generate_response(200, None, mr_details)
+        view_details = get_material_request_picking_view_details(mr_name, user, item_group)
+        return generate_response(200, None, view_details)
 
     except Exception as e:
         frappe.response = exception_handler(e)   
@@ -173,55 +172,8 @@ def get_material_request_picking_view(user:str, mr_name:str, item_group:str) -> 
 def submit_scan_details(user:str, mr_name:str, item_code:str, qty:int) -> dict:
     """Endpoint for submission of scans"""
     try:
-        mr_details = process_scan_details(mr_name, user, item_code, qty)
-        return generate_response(200, None, mr_details)
-
-    except Exception as e:
-        frappe.response = exception_handler(e)   
-        raise e
-
-@frappe.whitelist() 
-@pick_stream_validate(methods=['GET'])
-def get_material_request_items(mr_name:str, user:str, selected_item_group:str) -> dict:
-    """Get available Material Request items filtered by user's item group."""
-    try:
-        mr_items = get_material_request_items_details(mr_name, user, selected_item_group)
-        if mr_items:
-            return generate_response(200, None, mr_items)
-            
-        return generate_response(404, 'No available Material Request items were found')
-
-    except Exception as e:
-        frappe.response = exception_handler(e)   
-        raise e
-
-@frappe.whitelist() 
-@pick_stream_validate(methods=['GET'])
-def create_source(mr_name:str, item_group:str, user:str):
-    try:
-        source = frappe.new_doc('Source')
-        source.update({
-            'material_request': mr_name,
-            'item_group': item_group,
-            'user': user
-        })
-        items = get_material_request_items_details(mr_name, user, item_group)
-        
-        for item in items:
-            source.append('items', {
-                'item_code': item.get('item_code'),
-                'item_name': item.get('item_name'),
-                'item_group': item.get('item_group'),
-                'description': item.get('description'),
-                'uom': item.get('uom'),
-                'requested_qty': item.get('requested_qty'),
-                'material_request_item': item.get('material_request_item')
-            })
-
-        print('source', source.items)
-        print('hettt')
-        source.insert()
-        # return generate_response(200, None)
+        scan_details = process_scan_details(user, mr_name, item_code, qty)
+        return generate_response(200, None, scan_details)
 
     except Exception as e:
         frappe.response = exception_handler(e)   

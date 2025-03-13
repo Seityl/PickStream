@@ -44,6 +44,7 @@ def check_source_exists(mr_name:str, item_group:str, user:str) -> bool:
         'user': user
     }):
         return True
+
     return False
     
 def check_item_against_barcode(item_code:str, barcode:str) -> bool:
@@ -321,54 +322,6 @@ def get_material_request_item_group_view_details(mr_name:str, user:str, item_gro
     except Exception as e:
         return exception_handler(e)
 
-# TODO: The following function is going to return data on an item by item basis
-# The function should return the most relevant/ up to date item which is to be picked
-# This function soley controls the current state of the picking view 
-# Should return the following:
-# 1. Current/ Relevant Crate Code
-# 2. Item's Description
-# 3. Item's Qty
-# 4. Item's UOM
-def get_material_request_picking_view_details(mr_name, user, item_group):
-    if check_source_exists:
-        pass
-
-    else:
-        create_source()
-
-def create_source(mr_name:str, item_group:str, user:str):
-    try:
-        source = frappe.new_doc('Source')
-        source.update({
-            'material_request': mr_name,
-            'item_group': item_group,
-            'user': user
-        })
-        items = get_material_request_items_details(mr_name, user, item_group)
-        
-        for item in items:
-            source.append('items', {
-                'item_code': item.get('item_code'),
-                'item_name': item.get('item_name'),
-                'item_group': item.get('item_group'),
-                'description': item.get('description'),
-                'uom': item.get('uom'),
-                'requested_qty': item.get('requested_qty'),
-                'material_request_item': item.get('material_request_item')
-            })
-
-        print('source', source.items)
-        print('hettt')
-        source.insert()
-        # return generate_response(200, None)
-
-    except Exception as e:
-        frappe.response = exception_handler(e)   
-        raise e
-
-def process_scan_details(mr_name, user, item_code, qty):
-    pass
-
 def get_material_request_items_details(mr_name:str, user:str, selected_item_group:str) -> dict:
     validate_exists('User', user)
     validate_exists('Material Request', mr_name)
@@ -385,42 +338,20 @@ def get_material_request_items_details(mr_name:str, user:str, selected_item_grou
                 mri.description,
                 mri.stock_uom AS uom,
                 mri.stock_qty AS requested_qty,
-                mri.name AS material_request_item
-            FROM `tabMaterial Request Item` mri
-            LEFT JOIN `tabBin` b ON mri.item_code = b.item_code
-            LEFT JOIN `tabWarehouse` w ON b.warehouse = w.name
-            WHERE 
-                mri.parent = %(mr_name)s
-                AND mri.item_group = %(selected_item_group)s
-                AND (w.parent_warehouse IN %(warehouse_list)s OR b.warehouse IS NULL)
-            ORDER BY b.creation DESC
-        """, {
-            'mr_name': mr_name,
-            'selected_item_group': selected_item_group,
-            'warehouse_list': tuple(warehouse_list)
-        }, as_dict=True) or {}
-        return frappe.db.sql("""
-            SELECT 
-                mri.item_code,
-                mri.item_name,
-                mri.item_group,
-                mri.description,
-                mri.stock_uom AS uom,
-                mri.stock_qty AS requested_qty,
-                b.warehouse AS from_warehouse,
-                mri.warehouse AS to_warehouse,
-                mri.parent AS material_request,
                 mri.name AS material_request_item,
+                mr.set_from_warehouse AS from_warehouse,
+                mr.set_warehouse AS to_warehouse,
                 b.actual_qty AS available_qty
             FROM `tabMaterial Request Item` mri
+            LEFT JOIN `tabMaterial Request` mr ON mri.parent = mr.name
             LEFT JOIN `tabBin` b ON mri.item_code = b.item_code
             LEFT JOIN `tabWarehouse` w ON b.warehouse = w.name
             WHERE 
                 mri.parent = %(mr_name)s
                 AND mri.item_group = %(selected_item_group)s
-                AND (w.parent_warehouse IN %(warehouse_list)s OR b.warehouse IS NULL)
-            ORDER BY b.creation DESC
-        """, {-
+                AND (w.parent_warehouse IN %(warehouse_list)s)
+            ORDER BY b.warehouse ASC
+        """, {
             'mr_name': mr_name,
             'selected_item_group': selected_item_group,
             'warehouse_list': tuple(warehouse_list)
@@ -482,3 +413,80 @@ def get_warehouse_group(user:str) -> str:
 def get_child_warehouses(parent_warehouse:str) -> list:
     """Get all descendant warehouses of specified parent"""
     return get_descendants_of("Warehouse", parent_warehouse)
+
+def get_material_request_picking_view_details(mr_name:str, user:str, item_group:str) -> dict:
+    try:
+        if check_source_exists(mr_name, item_group, user):
+            source_name = frappe.db.get_value('Source', {
+                'material_request': mr_name,
+                'item_group': item_group,
+                'user': user
+            }, 'name')
+            return get_relevant_source_item(source_name)
+
+        else:
+            source = create_source(mr_name, item_group, user)
+            return get_relevant_source_item(source.name)
+            
+    except Exception as e:
+        frappe.response = exception_handler(e)   
+        raise e
+
+def get_relevant_source_item(source_name:str) -> dict:
+    try:
+        out = frappe._dict()
+        doc = frappe.get_doc('Source', source_name)
+        for item in doc.items:
+            if not item.scanned and not item.skipped:
+                out['item_code'] = item.item_code
+                out['description'] = item.description
+                out['requested_qty'] = item.requested_qty
+                out['uom'] = item.uom
+                out['from_warehouse'] = item.from_warehouse
+                return out
+
+        return out
+
+    except Exception as e:
+        frappe.response = exception_handler(e)   
+        raise e
+    
+def create_source(mr_name:str, item_group:str, user:str) -> dict:
+    source = frappe.new_doc('Source')
+    source.update({
+        'material_request': mr_name,
+        'item_group': item_group,
+        'user': user
+    })
+    items = get_material_request_items_details(mr_name, user, item_group)
+
+    for item in items:
+        source.append('items', {
+            'item_code': item.get('item_code'),
+            'item_name': item.get('item_name'),
+            'item_group': item.get('item_group'),
+            'description': item.get('description'),
+            'from_warehouse': item.get('from_warehouse'),
+            'to_warehouse': item.get('to_warehouse'),
+            'uom': item.get('uom'),
+            'requested_qty': item.get('requested_qty'),
+            'available_qty': item.get('available_qty'),
+            'material_request': item.get('material_request'),
+            'material_request_item': item.get('material_request_item')
+        })
+
+    frappe.db.savepoint('sp')
+
+    try:
+        source.insert()
+        frappe.db.commit()
+        return source
+
+    except Exception as e:
+        frappe.db.rollback()
+        frappe.response = exception_handler(e)   
+        raise e
+
+def process_scan_details(user:str, mr_name:str, item_code:str, qty:int) -> dict:
+    pass
+

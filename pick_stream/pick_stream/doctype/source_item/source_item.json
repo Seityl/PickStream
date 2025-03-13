@@ -175,10 +175,10 @@
   },
   {
    "columns": 1,
+   "default": "1",
    "fieldname": "conversion_factor",
    "fieldtype": "Float",
    "label": "UOM Conversion Factor",
-   "options": "UOM",
    "read_only": 1
   },
   {
@@ -190,6 +190,7 @@
   },
   {
    "columns": 2,
+   "default": "0",
    "fieldname": "scanned_qty",
    "fieldtype": "Int",
    "in_list_view": 1,
@@ -201,7 +202,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-03-05 13:49:27.931325",
+ "modified": "2025-03-12 16:54:12.611111",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Source Item",

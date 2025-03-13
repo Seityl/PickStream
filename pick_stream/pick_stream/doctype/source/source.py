@@ -11,10 +11,12 @@ from frappe.utils.nestedset import get_descendants_of
 
 class Source(Document):
     def before_save(self):
+        print('source before save')
         self.set_item_locations()
 
     def set_item_locations(self):
         items = self.aggregate_item_qty()
+        print('items', items)
         scanned_items_details = self.get_scanned_items_details(items)
 
         self.item_location_map = frappe._dict()
@@ -67,6 +69,7 @@ class Source(Document):
                     updated_locations[key].qty += location.qty
 
         for location in updated_locations.values():
+            print('updated location: ', location)
             if location.scanned_qty > location.requested_qty:
                 location.scanned_qty = location.requested_qty
 
@@ -274,7 +277,7 @@ def get_item_with_location_and_quantity(item_doc, item_location_map):
 		locations.append(
 			frappe._dict({
                 "qty": qty,
-                "warehouse": item_location.warehouse,
+                "from_warehouse": item_location.warehouse,
             })
 		)
 
