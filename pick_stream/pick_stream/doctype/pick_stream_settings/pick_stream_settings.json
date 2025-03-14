@@ -1,0 +1,47 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-03-14 04:33:00.070920",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "default_set_from_warehouse"
+ ],
+ "fields": [
+  {
+   "default": "KG Warehouse - JP",
+   "description": "Default warehouse to source from if no source warehouse is set on a Material Request.",
+   "fieldname": "default_set_from_warehouse",
+   "fieldtype": "Link",
+   "label": "Default Set From Warehouse",
+   "options": "Warehouse"
+  }
+ ],
+ "hide_toolbar": 1,
+ "in_create": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-03-14 04:35:06.576881",
+ "modified_by": "Administrator",
+ "module": "Pick Stream",
+ "name": "Pick Stream Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "track_seen": 1,
+ "track_views": 1
+}

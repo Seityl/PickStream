@@ -168,204 +168,33 @@ def get_material_request_picking_view(user:str, mr_name:str, item_group:str) -> 
         raise e
 
 @frappe.whitelist()
-@pick_stream_validate(methods=['GET'])
-def submit_scan_details(user:str, mr_name:str, item_code:str, qty:int) -> dict:
+@pick_stream_validate(methods=['POST'])
+def submit_scan_details(
+    user:str,
+    mr_name:str,
+    item_code:str,
+    item_group:str,
+    crate_code:str,
+    scanned_qty:int,
+    skipped:bool = False
+    ) -> dict:
     """Endpoint for submission of scans"""
     try:
-        scan_details = process_scan_details(user, mr_name, item_code, qty)
-        return generate_response(200, None, scan_details)
+        process_scan = process_scan_details(
+            user,
+            mr_name,
+            item_code,
+            item_group,
+            crate_code,
+            scanned_qty,
+            skipped
+        )
+
+        if not process_scan.success:
+            return generate_response(417, None, process_scan)
+
+        return generate_response(200, None, process_scan)
 
     except Exception as e:
         frappe.response = exception_handler(e)   
         raise e
-
-def create_crate_log(crate_code: str, stream: str, to_warehouse: str, from_warehouse: str, picked_by: str, items: list) -> dict:
-    try:
-        crate_log = frappe.get_doc({
-            'doctype': 'Crate Log',
-            'crate_code': crate_code,
-            'stream': stream,
-            'to_warehouse': to_warehouse,
-            'from_warehouse': from_warehouse,
-            'picked_by': picked_by,
-            'items': items,
-        })
-        crate_log.insert()
-        return {'status': 'success', 'crate_log': crate_log}
-
-    except Exception as e:
-        return {'status': 'error', 'message': str(e)}
-    
-@frappe.whitelist()
-def create_stream(crate_code:str='BE-0001', item_group:str='FOOD/SNACK', material_request:str='MAT-MR-2025-00065', from_warehouse:str='KG Warehouse - JP', to_warehouse:str='GG Stock - JP', items:list=[]) -> dict:
-    try:
-        crate_validated = validate_crate(crate_code) 
-
-        if crate_validated.get('status') != 'success':
-            return crate_validated
-
-        stream = frappe.get_doc({
-            'doctype': 'Stream',
-            'crate_code': crate_code,
-            'item_group': item_group,
-            'material_request': material_request,
-            'from_warehouse': from_warehouse,
-            'to_warehouse': to_warehouse,
-            'items': items
-        })
-        stream.insert()
-        return {'status': 'success', 'stream': stream}
-        
-    except Exception as e:
-        frappe.log_error(message=str(e), title="Error in create_stream", reference_doctype='Stream')
-        return {'status': 'error', 'message': str(e)}
-
-def update_crate(
-        stream: str = 'PICK-STR-2025-012663',
-        is_insert: bool = False,
-        is_update: bool = False,
-        is_waiting: bool = False,
-        is_transit: bool = False,
-        is_verifying: bool = False,
-        is_clear: bool = False
-    ) -> dict:
-    try:
-        stream_doc = frappe.get_doc('Stream', stream)
-        crate_doc = frappe.get_doc('Crate', stream_doc.crate_code)
-        previous_status = crate_doc.status
-        out = []
-
-        if is_insert:
-            crate_validated = validate_crate(stream_doc.crate_code)
-
-            if crate_validated.get('status') != 'success':
-                return crate_validated
-                
-            crate_doc.update({
-                'status': 'Picking',
-                'stream': stream_doc.name,
-                'item_group': stream_doc.item_group,
-                'from_warehouse': stream_doc.from_warehouse,
-                'to_warehouse': stream_doc.to_warehouse
-            })
-            out.append(
-                f"Updated: Status 'Available' -> 'Picking', Stream -> {stream_doc.name}, "
-                f"Item Group -> {stream_doc.item_group}, From Warehouse -> {stream_doc.from_warehouse}, "
-                f"To Warehouse -> {stream_doc.to_warehouse}"
-            )
-
-        elif is_update:
-            crate_doc.items.clear()
-            
-            for item in stream_doc.items:
-                crate_doc.append('items', {
-                    'item_code': item.item_code,
-                    'item_name': item.item_name,
-                    'item_group': item.item_group,
-                    'uom': item.uom,
-                    'qty': item.qty,
-                    'from_warehouse': item.from_warehouse,
-                    'to_warehouse': item.to_warehouse,
-                    'material_request': item.material_request,
-                    'material_request_item': item.material_request_item
-                })
-                
-            out.append("Synchronized crate items with stream.")
-
-        elif is_waiting:
-            crate_doc.update({'status': 'Waiting'})
-            out.append(f"Updated: Status '{previous_status}' -> 'Waiting'.")
-
-        elif is_transit:
-            crate_doc.update({'status': 'In Transit'})
-            out.append(f"Updated: Status '{previous_status}' -> 'In Transit'.")
-
-        elif is_verifying:
-            crate_doc.update({'status': 'Verifying'})
-            out.append(f"Updated: Status '{previous_status}' -> 'Verifying'.")
-
-        elif is_clear:
-            crate_doc.update({
-                'status': 'Available',
-                'stream': None,
-                'item_group': None,
-                'from_warehouse': None,
-                'to_warehouse': None
-            })
-            crate_doc.items.clear()
-            out.append(f"Updated: Status '{previous_status}' -> 'Available'. Cleared Items Table.")
-
-        crate_doc.save()
-        return {
-            'status': 'success',
-            'message': "Crate updated successfully.",
-            'details': ' '.join(out)
-        }
-
-    except Exception as e:
-        frappe.log_error(message=str(e), title="Error in update_crate", reference_doctype='Crate')
-        return {'status': 'error', 'message': str(e)}
-
-def update_stream(stream:str, data:dict):
-    try:
-        stream_doc = frappe.get_doc('Stream', stream)
-
-        for key in data:
-            if not stream_doc.key:
-                return
-                
-            elif stream_doc.key != key:
-                stream_doc.key = key
-                
-    except Exception as e:
-        frappe.log_error(message=str(e), title='Error in update_stream', reference_doctype='Stream')
-        return {'status': 'error', 'message': str(e)}
-
-def update_stream_items(stream:str, items:list) -> dict:
-    try:
-        stream_doc = frappe.get_doc('Stream', stream)
-        out = ''
-        existing_items = {item.item_code: item for item in stream_doc.items} if stream_doc.items else {}
-        
-        for item in items:
-            item_code = item.get('item_code')
-            
-            if not item_code:
-                frappe.log_error(
-                    message=f"Each item must have an item_code: {item}",
-                    title="Error in update_stream_items",
-                    reference_doctype='Stream',
-                    reference_name=stream_doc.name
-                )
-                return {'status': 'error', 'message': 'Each item must have an item_code.'}
-                
-            if item_code in existing_items:
-                matched_item = existing_items[item_code]
-                
-                for key, value in item.items():
-                    if hasattr(matched_item, key) and getattr(matched_item, key) != value:
-                        previous_value = getattr(matched_item, key)
-                        setattr(matched_item, key, value)
-                        out += f'Updated {key} of Item {item_code} from {previous_value} to {value}, '
-
-            else:
-                stream_doc.append('items', item)
-                out += f'Added Item {item}, '
-                
-        stream_doc.save()
-        return {
-            'status': 'success',
-            'message': out
-        }
-
-    except Exception as e:
-        frappe.log_error(
-            message=str(e),
-            title="Error in update_stream_items",
-            reference_doctype='Stream',
-            reference_name=stream
-        )
-        return {'status': 'error', 'message': str(e)}
-
-def update_crate_log(stream_name: str) -> dict:
-    pass

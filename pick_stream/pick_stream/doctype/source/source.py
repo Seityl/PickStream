@@ -9,27 +9,28 @@ from frappe.model.document import Document
 from frappe.utils import cint, floor, get_link_to_form
 from frappe.utils.nestedset import get_descendants_of
 
+from pick_stream.core import get_pick_stream_settings
+from pick_stream.api_utils import exception_handler
+
 class Source(Document):
     def before_save(self):
-        print('source before save')
         self.set_item_locations()
 
     def set_item_locations(self):
+        settings = get_pick_stream_settings()
         items = self.aggregate_item_qty()
-        print('items', items)
         scanned_items_details = self.get_scanned_items_details(items)
 
         self.item_location_map = frappe._dict()
 
         # Default to sourcing from KG if no source warehouse is set on Material Request
-        default_set_from_warehouse = 'KG Warehouse - JP'
+        default_set_from_warehouse = settings.default_set_from_warehouse
         set_from_warehouse = frappe.db.get_value('Material Request', self.material_request, 'set_from_warehouse')
         from_warehouses = [set_from_warehouse] if set_from_warehouse else [default_set_from_warehouse]
         from_warehouses.extend(get_descendants_of('Warehouse', from_warehouses))
 
         # Create replica before resetting, to handle empty table on update after submit.
         locations_replica = self.get('items')
-        
         # Reset Items
         self.delete_key('items')
 
@@ -37,7 +38,6 @@ class Source(Document):
         
         for item_doc in items:
             item_code = item_doc.item_code
-
             self.item_location_map.setdefault(
                 item_code,
                 get_available_item_locations(
@@ -68,10 +68,13 @@ class Source(Document):
                 else:
                     updated_locations[key].qty += location.qty
 
-        for location in updated_locations.values():
-            print('updated location: ', location)
+        sorted_locations = sorted(updated_locations.values(), key=lambda loc: loc.get("from_warehouse", ""))
+
+        for location in sorted_locations:
             if location.scanned_qty > location.requested_qty:
-                location.scanned_qty = location.requested_qty
+                e = frappe.exceptions.DoesNotExistError(f"Error: Scanned qty {location.scanned_qty} exceeds requests qty {location.requested_qty} for item {location.item_code}")
+                frappe.response = exception_handler(e)   
+                raise e
 
             self.append('items', location)
 
@@ -104,9 +107,10 @@ class Source(Document):
                 continue
 
             item_code = item.item_code
-            reference = item.material_request_item
+            material_request = item.material_request
+            material_request_item = item.material_request_item
 
-            key = (item_code, item.uom, item.to_warehouse, reference)
+            key = (item_code, item.uom, item.to_warehouse, material_request, material_request_item)
 
             item.idx = None
             item.name = None

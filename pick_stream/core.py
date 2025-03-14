@@ -1,15 +1,19 @@
 import frappe
 from frappe import _
-from frappe.auth import LoginManager
 from frappe.utils.nestedset import get_descendants_of
-from frappe.utils import add_to_date, strip_html_tags
 
-from datetime import datetime
 from pick_stream.api_utils import exception_handler
 
-def validate_exists(doctype:str, id:str) -> None:
+def validate_exists(doctype:str, id:str, child:bool = False, field:str = None) -> None:
     """Raises an exception if document does not exist in the database."""
-    if not frappe.db.exists(doctype, id):
+    if not child and not field:
+        if not frappe.db.exists(doctype, id):
+            e = frappe.exceptions.DoesNotExistError(f"{doctype} '{id}' does not exist.")
+            frappe.response = exception_handler(e)   
+            raise e
+        return
+
+    if not frappe.db.exists(doctype, {field:id}):
         e = frappe.exceptions.DoesNotExistError(f"{doctype} '{id}' does not exist.")
         frappe.response = exception_handler(e)   
         raise e
@@ -23,7 +27,7 @@ def validate_employee_exists(user:str) -> None:
 def validate_user_assigned_to_item_group(user:str, id:str) -> None:
     validate_exists('Item Group', id)
     if not frappe.db.exists("User Group Member", {'user': user, 'parent':id}):
-        e = frappe.ValidationError(f"User '{user}' not assigned to item group '{id}'")
+        e = frappe.exceptions.DoesNotExistError(f"Assignment for user '{user}' not found for item group '{id}'")
         frappe.response = exception_handler(e)   
         raise e
         
@@ -33,7 +37,7 @@ def validate_user_assigned_to_mr(mr_name:str, user:str) -> None:
         "reference_name": mr_name,
         "status": "Open"
     }):
-        e = frappe.ValidationError(f"User {user} is not assigned to MR {mr_name}")
+        e = frappe.exceptions.DoesNotExistError(f"ToDo for user {user} to MR {mr_name} not found")
         frappe.response = exception_handler(e)   
         raise e
 
@@ -44,11 +48,11 @@ def check_source_exists(mr_name:str, item_group:str, user:str) -> bool:
         'user': user
     }):
         return True
-
     return False
     
 def check_item_against_barcode(item_code:str, barcode:str) -> bool:
     validate_exists('Item', item_code)
+    validate_exists('Item Barcode', barcode, child=True, field='barcode')
     try:
         parent = frappe.db.get_value('Item Barcode', {'barcode':barcode}, 'parent')
         if parent != item_code:
@@ -188,7 +192,6 @@ def get_mr_item_groups_for_user(mr_name:str, user:str) -> list:
 # TODO: Have this also check based on the ordered qty for mr items
 def get_mr_available_item_groups_for_user(mr_name:str, user:str) -> dict:
     """Returns item groups which don't already have completed stream for material request"""
-    validate_user_assigned_to_mr(mr_name, user)
     out = {}
     try:
         user_item_groups = get_mr_item_groups_for_user(mr_name, user)
@@ -322,14 +325,13 @@ def get_material_request_item_group_view_details(mr_name:str, user:str, item_gro
     except Exception as e:
         return exception_handler(e)
 
+@frappe.whitelist()
 def get_material_request_items_details(mr_name:str, user:str, selected_item_group:str) -> dict:
     validate_exists('User', user)
     validate_exists('Material Request', mr_name)
     validate_user_assigned_to_mr(mr_name, user)
     validate_user_assigned_to_item_group(user, selected_item_group)
     try:
-        warehouse_group = get_warehouse_group(user)
-        warehouse_list = get_child_warehouses(warehouse_group)
         return frappe.db.sql("""
             SELECT 
                 mri.item_code,
@@ -339,22 +341,17 @@ def get_material_request_items_details(mr_name:str, user:str, selected_item_grou
                 mri.stock_uom AS uom,
                 mri.stock_qty AS requested_qty,
                 mri.name AS material_request_item,
+                mr.name AS material_request,
                 mr.set_from_warehouse AS from_warehouse,
-                mr.set_warehouse AS to_warehouse,
-                b.actual_qty AS available_qty
+                mr.set_warehouse AS to_warehouse
             FROM `tabMaterial Request Item` mri
             LEFT JOIN `tabMaterial Request` mr ON mri.parent = mr.name
-            LEFT JOIN `tabBin` b ON mri.item_code = b.item_code
-            LEFT JOIN `tabWarehouse` w ON b.warehouse = w.name
             WHERE 
                 mri.parent = %(mr_name)s
                 AND mri.item_group = %(selected_item_group)s
-                AND (w.parent_warehouse IN %(warehouse_list)s)
-            ORDER BY b.warehouse ASC
         """, {
             'mr_name': mr_name,
-            'selected_item_group': selected_item_group,
-            'warehouse_list': tuple(warehouse_list)
+            'selected_item_group': selected_item_group
         }, as_dict=True) or {}
 
     except Exception as e:
@@ -414,14 +411,17 @@ def get_child_warehouses(parent_warehouse:str) -> list:
     """Get all descendant warehouses of specified parent"""
     return get_descendants_of("Warehouse", parent_warehouse)
 
+def get_source_name(mr_name:str, item_group:str, user:str) -> str:
+    return frappe.db.get_value('Source', {
+        'material_request': mr_name,
+        'item_group': item_group,
+        'user': user
+    }, 'name') or ''
+
 def get_material_request_picking_view_details(mr_name:str, user:str, item_group:str) -> dict:
     try:
         if check_source_exists(mr_name, item_group, user):
-            source_name = frappe.db.get_value('Source', {
-                'material_request': mr_name,
-                'item_group': item_group,
-                'user': user
-            }, 'name')
+            source_name = get_source_name(mr_name, item_group, user)
             return get_relevant_source_item(source_name)
 
         else:
@@ -437,7 +437,7 @@ def get_relevant_source_item(source_name:str) -> dict:
         out = frappe._dict()
         doc = frappe.get_doc('Source', source_name)
         for item in doc.items:
-            if not item.scanned and not item.skipped:
+            if not item.scanned:
                 out['item_code'] = item.item_code
                 out['description'] = item.description
                 out['requested_qty'] = item.requested_qty
@@ -445,11 +445,12 @@ def get_relevant_source_item(source_name:str) -> dict:
                 out['from_warehouse'] = item.from_warehouse
                 return out
 
-        return out
-
     except Exception as e:
         frappe.response = exception_handler(e)   
         raise e
+
+def get_pick_stream_settings() -> dict:
+    return frappe.get_doc('Pick Stream Settings') 
     
 def create_source(mr_name:str, item_group:str, user:str) -> dict:
     source = frappe.new_doc('Source')
@@ -487,6 +488,261 @@ def create_source(mr_name:str, item_group:str, user:str) -> dict:
         frappe.response = exception_handler(e)   
         raise e
 
-def process_scan_details(user:str, mr_name:str, item_code:str, qty:int) -> dict:
-    pass
+def process_scan_details(
+        user:str,
+        mr_name:str,
+        item_code:str,
+        item_group:str,
+        crate_code:str,
+        scanned_qty:int,
+        skipped:bool = False
+    ) -> dict:
+    out = frappe._dict()
+    out['success'] = True
 
+    validate_exists('User', user)
+    validate_exists('Item', item_code)
+    validate_exists('Crate', crate_code)
+    validate_exists('Item Group', item_group)
+    validate_exists('Material Request', mr_name)
+
+    validate_user_assigned_to_mr(mr_name, user)
+    validate_user_assigned_to_item_group(user, item_group)
+
+    source_name = get_source_name(mr_name, item_group, user)
+    if not source_name:
+        out['success'] = False
+        out['message'] = f'Source based on material request {mr_name} for user {user} and item_group {item_group} does not exist.'
+        return out
+
+    relevant_item = get_relevant_source_item(source_name) 
+    if relevant_item.item_code != item_code:
+        out['success'] = False
+        out['message'] = f'Scanned item {item_code} does not match relevant item {relevant_item.item_code}.'
+        return out
+
+    doc = frappe.get_doc('Source', source_name)
+    found = False
+
+    for item in doc.items:
+        if item.item_code == item_code:
+            item.scanned = 1
+            item.crate_code = crate_code
+            item.scanned_qty = scanned_qty
+            out['message'] = f'Scanned {scanned_qty} {item.uom} for item {item_code}'
+
+            if skipped:
+                item.skipped = 1
+                out['message'] = f'Skipped item {item_code}'
+            
+            found = True
+            break
+
+    if not found:
+        e = frappe.exceptions.DoesNotExistError(f"Item {item_code} not found in Source {source_name}.")
+        frappe.response = exception_handler(e)   
+        raise e
+    
+    frappe.db.savepoint('sp')
+
+    try:
+        doc.save()
+        frappe.db.commit()
+
+    except Exception as e:
+        frappe.db.rollback()
+        frappe.response = exception_handler(e)   
+        raise e
+        
+    return out
+
+def create_crate_log(crate_code: str, stream: str, to_warehouse: str, from_warehouse: str, picked_by: str, items: list) -> dict:
+    try:
+        crate_log = frappe.get_doc({
+            'doctype': 'Crate Log',
+            'crate_code': crate_code,
+            'stream': stream,
+            'to_warehouse': to_warehouse,
+            'from_warehouse': from_warehouse,
+            'picked_by': picked_by,
+            'items': items,
+        })
+        crate_log.insert()
+        return {'status': 'success', 'crate_log': crate_log}
+
+    except Exception as e:
+        return {'status': 'error', 'message': str(e)}
+    
+@frappe.whitelist()
+def create_stream(crate_code:str='BE-0001', item_group:str='FOOD/SNACK', material_request:str='MAT-MR-2025-00065', from_warehouse:str='KG Warehouse - JP', to_warehouse:str='GG Stock - JP', items:list=[]) -> dict:
+    try:
+        crate_validated = validate_crate(crate_code) 
+
+        if crate_validated.get('status') != 'success':
+            return crate_validated
+
+        stream = frappe.get_doc({
+            'doctype': 'Stream',
+            'crate_code': crate_code,
+            'item_group': item_group,
+            'material_request': material_request,
+            'from_warehouse': from_warehouse,
+            'to_warehouse': to_warehouse,
+            'items': items
+        })
+        stream.insert()
+        return {'status': 'success', 'stream': stream}
+        
+    except Exception as e:
+        frappe.log_error(message=str(e), title="Error in create_stream", reference_doctype='Stream')
+        return {'status': 'error', 'message': str(e)}
+
+def update_crate(
+        stream: str = 'PICK-STR-2025-012663',
+        is_insert: bool = False,
+        is_update: bool = False,
+        is_waiting: bool = False,
+        is_transit: bool = False,
+        is_verifying: bool = False,
+        is_clear: bool = False
+    ) -> dict:
+    try:
+        stream_doc = frappe.get_doc('Stream', stream)
+        crate_doc = frappe.get_doc('Crate', stream_doc.crate_code)
+        previous_status = crate_doc.status
+        out = []
+
+        if is_insert:
+            crate_validated = validate_crate(stream_doc.crate_code)
+
+            if crate_validated.get('status') != 'success':
+                return crate_validated
+                
+            crate_doc.update({
+                'status': 'Picking',
+                'stream': stream_doc.name,
+                'item_group': stream_doc.item_group,
+                'from_warehouse': stream_doc.from_warehouse,
+                'to_warehouse': stream_doc.to_warehouse
+            })
+            out.append(
+                f"Updated: Status 'Available' -> 'Picking', Stream -> {stream_doc.name}, "
+                f"Item Group -> {stream_doc.item_group}, From Warehouse -> {stream_doc.from_warehouse}, "
+                f"To Warehouse -> {stream_doc.to_warehouse}"
+            )
+
+        elif is_update:
+            crate_doc.items.clear()
+            
+            for item in stream_doc.items:
+                crate_doc.append('items', {
+                    'item_code': item.item_code,
+                    'item_name': item.item_name,
+                    'item_group': item.item_group,
+                    'uom': item.uom,
+                    'qty': item.qty,
+                    'from_warehouse': item.from_warehouse,
+                    'to_warehouse': item.to_warehouse,
+                    'material_request': item.material_request,
+                    'material_request_item': item.material_request_item
+                })
+                
+            out.append("Synchronized crate items with stream.")
+
+        elif is_waiting:
+            crate_doc.update({'status': 'Waiting'})
+            out.append(f"Updated: Status '{previous_status}' -> 'Waiting'.")
+
+        elif is_transit:
+            crate_doc.update({'status': 'In Transit'})
+            out.append(f"Updated: Status '{previous_status}' -> 'In Transit'.")
+
+        elif is_verifying:
+            crate_doc.update({'status': 'Verifying'})
+            out.append(f"Updated: Status '{previous_status}' -> 'Verifying'.")
+
+        elif is_clear:
+            crate_doc.update({
+                'status': 'Available',
+                'stream': None,
+                'item_group': None,
+                'from_warehouse': None,
+                'to_warehouse': None
+            })
+            crate_doc.items.clear()
+            out.append(f"Updated: Status '{previous_status}' -> 'Available'. Cleared Items Table.")
+
+        crate_doc.save()
+        return {
+            'status': 'success',
+            'message': "Crate updated successfully.",
+            'details': ' '.join(out)
+        }
+
+    except Exception as e:
+        frappe.log_error(message=str(e), title="Error in update_crate", reference_doctype='Crate')
+        return {'status': 'error', 'message': str(e)}
+
+def update_stream(stream:str, data:dict):
+    try:
+        stream_doc = frappe.get_doc('Stream', stream)
+
+        for key in data:
+            if not stream_doc.key:
+                return
+                
+            elif stream_doc.key != key:
+                stream_doc.key = key
+                
+    except Exception as e:
+        frappe.log_error(message=str(e), title='Error in update_stream', reference_doctype='Stream')
+        return {'status': 'error', 'message': str(e)}
+
+def update_stream_items(stream:str, items:list) -> dict:
+    try:
+        stream_doc = frappe.get_doc('Stream', stream)
+        out = ''
+        existing_items = {item.item_code: item for item in stream_doc.items} if stream_doc.items else {}
+        
+        for item in items:
+            item_code = item.get('item_code')
+            
+            if not item_code:
+                frappe.log_error(
+                    message=f"Each item must have an item_code: {item}",
+                    title="Error in update_stream_items",
+                    reference_doctype='Stream',
+                    reference_name=stream_doc.name
+                )
+                return {'status': 'error', 'message': 'Each item must have an item_code.'}
+                
+            if item_code in existing_items:
+                matched_item = existing_items[item_code]
+                
+                for key, value in item.items():
+                    if hasattr(matched_item, key) and getattr(matched_item, key) != value:
+                        previous_value = getattr(matched_item, key)
+                        setattr(matched_item, key, value)
+                        out += f'Updated {key} of Item {item_code} from {previous_value} to {value}, '
+
+            else:
+                stream_doc.append('items', item)
+                out += f'Added Item {item}, '
+                
+        stream_doc.save()
+        return {
+            'status': 'success',
+            'message': out
+        }
+
+    except Exception as e:
+        frappe.log_error(
+            message=str(e),
+            title="Error in update_stream_items",
+            reference_doctype='Stream',
+            reference_name=stream
+        )
+        return {'status': 'error', 'message': str(e)}
+
+def update_crate_log(stream_name: str) -> dict:
+    pass
