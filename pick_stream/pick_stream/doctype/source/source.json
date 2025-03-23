@@ -1,16 +1,18 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "autoname": "hash",
  "creation": "2025-02-28 11:13:17.589873",
  "doctype": "DocType",
+ "document_type": "Document",
  "engine": "InnoDB",
  "field_order": [
+  "material_request",
+  "user",
+  "column_break_qpvc",
+  "item_group",
+  "status",
   "section_break_8u0d",
   "amended_from",
-  "material_request",
-  "item_group",
-  "user",
-  "status",
   "items"
  ],
  "fields": [
@@ -39,6 +41,8 @@
   {
    "fieldname": "material_request",
    "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Material Request",
    "no_copy": 1,
    "options": "Material Request",
@@ -48,6 +52,8 @@
   {
    "fieldname": "item_group",
    "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Item Group",
    "no_copy": 1,
    "options": "Item Group",
@@ -57,6 +63,8 @@
   {
    "fieldname": "user",
    "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "User",
    "no_copy": 1,
    "options": "User",
@@ -67,18 +75,27 @@
    "default": "Working",
    "fieldname": "status",
    "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Status",
    "options": "Working\nCompleted",
-   "read_only": 1
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_qpvc",
+   "fieldtype": "Column Break"
   }
  ],
+ "hide_toolbar": 1,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-03-13 12:24:53.821769",
+ "modified": "2025-03-19 14:56:04.586719",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Source",
+ "naming_rule": "Random",
  "owner": "Administrator",
  "permissions": [
   {
@@ -90,6 +107,7 @@
    "read": 1,
    "report": 1,
    "role": "System Manager",
+   "select": 1,
    "share": 1,
    "submit": 1,
    "write": 1
@@ -97,5 +115,7 @@
  ],
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "track_changes": 1,
+ "track_seen": 1
 }

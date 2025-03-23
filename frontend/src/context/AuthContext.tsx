@@ -1,5 +1,5 @@
 // import axiosClient from '../../utils/client';
-import frappeClient from '../../utils/client';
+import {frappeAuth} from '../../utils/client';
 import {
   useContext,
   createContext,
@@ -34,7 +34,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [isAuthenticated, setIsAuthenticated] = useState(
     !!localStorage.getItem('user')
   );
-  const auth = frappeClient.auth();
+  
+  const auth = frappeAuth;
 
   return (
     <AuthContext.Provider
@@ -54,7 +55,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
               setIsAuthenticated(true);
             }
 
-            console.log(user);
+            console.log("user:", user);
             setIsLoading(false);
           } catch (e) {
             setIsLoading(false);

@@ -4,6 +4,11 @@ import { FaArrowLeft } from 'react-icons/fa6';
 import {frappeClient} from '../../utils/client';
 import { useAuth } from '../context/AuthContext';
 
+
+type CrateItem = {
+  item_code: string;
+};
+
 type SourceItem = {
   item_code: string;
   description: string;
@@ -18,7 +23,6 @@ export default function Picking() {
   const [isHidden, setIsHidden] = useState(true);
   const [sourceItem, setSourceItem] = useState<SourceItem | null>(null)
   const [itemBarocde, setItemBarcode] = useState('');
-  const [itemIsValidated, setItemIsValidated] = useState(false);
   const [scannedQuantity, setScannedQuantity] = useState(0);
   const navigate = useNavigate();
   const routeParams = useParams();
@@ -31,15 +35,6 @@ export default function Picking() {
   // function backToMaterialRequest() {
   //   navigate(`/pick_stream/material-requests/$`);
   // }
-  async function validateBarcode() {
-    const params = {
-      item_code: sourceItem?.item_code,
-      barcode: itemBarocde
-    }
-    const response = await frappeClient.get('pick_stream.api.validate_item_against_barcode', params);
-
-    setItemIsValidated(response.message.data);
-  }
 
   async function submitScan() {
     const params = {
@@ -49,14 +44,10 @@ export default function Picking() {
       item_group: searchParams.get('item_group'),
       crate_code: searchParams.get('crate_code'),
       scanned_qty: scannedQuantity,
-      skipped: false,
-      closed_crate: false,
     };
+    const response = await frappeClient.post('pick_stream.api.submit_scan_details', params);
 
-    // const response = await fetch('http://10.0.10.122:8000/api/method/pick_stream.api.submit_scan_details' + new URLSearchParams({...params}));
-    const response = await frappeClient.get('pick_stream.api.submit_scan_details', params);
-
-    console.log(response);
+    console.log(response)
     toggleModal();
   }
   useEffect(() => {
@@ -64,8 +55,7 @@ export default function Picking() {
       const params = {
         user: user,
         mr_name: routeParams.material_request,
-        item_group: searchParams.get('item_group'),
-        crate_code: searchParams.get('crate_code')
+        item_group: searchParams.get('item_group')
       };
       const response = await frappeClient.get('pick_stream.api.get_material_request_picking_view', params);
 
@@ -86,39 +76,11 @@ export default function Picking() {
       </header>
 
       <div className="px-4">
-        {!isHidden ? 
-            (
-            <>
-            <div className="modal-backdrop" onClick={toggleModal}></div>
+        <form className="">
+          {!isHidden ? (
             <div className="modal">
-              {itemIsValidated ? 
-              
-              <div className="flex flex-col items-center modal-content">
-                <p className="mb-8 rounded-[6px] bg-[#e2e2e2] p-[6px]">
-                  {sourceItem?.item_code}
-                </p>
+              <div className="modal-backdrop" onClick={submitScan}></div>
 
-                <div className="input-container w-full">
-                  <label htmlFor="scanned_quantity">
-                    Scanned Quantity
-                    <input
-                      className="input-field mb-0"
-                      name="scanned_quantity"
-                      id="scanned_quantity"
-                      type="number"
-                      placeholder="Scanned Quantity"
-                      value={scannedQuantity}
-                      onChange={(e) => setScannedQuantity(parseInt(e.target.value))}
-                    />
-                  </label>
-                </div>
-
-                <button className="scan-btn" type="submit" onClick={submitScan}>
-                  Submit Scan
-                </button>
-              
-              </div>
-              :    
               <div className="flex flex-col items-center modal-content">
                 <p className="mb-8 rounded-[6px] bg-[#e2e2e2] p-[6px]">
                   {sourceItem?.item_code}
@@ -139,20 +101,29 @@ export default function Picking() {
                   </label>
                 </div>
 
-                <button className="scan-btn" type="submit" onClick={validateBarcode}>
-                  Verify Barcode
+                <div className="input-container w-full">
+                  <label htmlFor="scanned_quantity">
+                    Scanned Quantity
+                    <input
+                      className="input-field mb-0"
+                      name="scanned_quantity"
+                      id="scanned_quantity"
+                      type="number"
+                      placeholder="Scanned Quantity"
+                      value={scannedQuantity}
+                      onChange={(e) => setScannedQuantity(parseInt(e.target.value))}
+                    />
+                  </label>
+                </div>
+
+                <button className="scan-btn" type="submit" onClick={toggleModal}>
+                  Submit Scan
                 </button>
-              
               </div>
-              }
             </div>
-            </>
-        ) 
-        : 
-            
-        ''
-        }
-        <form className="">
+          ) : (
+            ''
+          )}
 
           <div className="input-container">
             <label htmlFor="item_code">

@@ -7,7 +7,8 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import MaterialRequestList from './pages/MaterialRequestList';
-import MaterialRequestDetail from './pages/MaterialRequestDetail';
+import ItemGroupsView from './pages/ItemGroupsView';
+import ItemGroupView from './pages/ItemGroupView';
 import CreateCrate from './pages/CreateCrate';
 import Picking from './pages/Picking';
 import Profile from './pages/Profile';
@@ -26,16 +27,13 @@ createRoot(document.getElementById('root')!).render(
 
               <Route path="material-requests">
                 <Route index element={<MaterialRequestList />} />
-                <Route
-                  path=":material_request"
-                  element={<MaterialRequestDetail />}
-                />
+                <Route path=":material_request" element={<ItemGroupsView />}/>
               </Route>
 
-              <Route path="crate-crate" element={<CreateCrate />} />
+              <Route path="create-crate" element={<CreateCrate />} />
 
               <Route path="picking">
-                <Route path=":stream" element={<Picking />} />
+                <Route path=":material_request" element={<Picking />} />
               </Route>
 
               <Route path="profile" element={<Profile />} />

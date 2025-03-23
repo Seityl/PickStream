@@ -13,13 +13,33 @@ export default defineConfig({
     VitePWA({
       includeAssets: ['./icons/favicon.ico', './icons/apple-touch-icon.png', './icons/mask-icon.svg'],
       manifest: {
-        // Your manifest configuration
+        name: "Pick Stream",
+        short_name: "PickStream",
+        description: "Progressive Web App for Jollys Pharmacy's picking operations.",
+        start_url: "./index.html", // Set to the subpath
+        display: "standalone",
+        theme_color: "#ffffff",
+        background_color: "#ffffff",
+        lang: "en",
+        scope: "./index.html", // Set to the subpath
+        icons: [
+          {
+            src: './icons/pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png'
+          },
+          {
+            src: './icons/pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png'
+          }
+        ]
       },
       devOptions: {
         enabled: true, // Enable service worker in development
       },
       workbox: {
-        cacheId: 'pick-stream-v2', // Change this to force a cache update
+        cacheId: 'pick-stream-v3', // Change this to force a cache update
         runtimeCaching: [
           {
             urlPattern: ({url}) => {

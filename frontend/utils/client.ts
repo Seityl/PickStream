@@ -6,6 +6,10 @@ const clientConfig = {
   domain: 'http://10.0.10.122:8000',
 };
 
-const frappeClient = new FrappeApp(clientConfig.domain);
+const frappeApp = new FrappeApp(clientConfig.domain);
 
-export default frappeClient;
+
+export const frappeClient = frappeApp.call();
+export const frappeAuth = frappeApp.auth();
+
+ 
