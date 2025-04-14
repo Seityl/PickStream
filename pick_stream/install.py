@@ -9,20 +9,19 @@ def after_install():
 def custom_field_user_group():
     create_custom_field(
         'User Group', {
-            "label": _("Is Item Group"),
-            "fieldname": "is_item_group",
-            "fieldtype": "Check",
-            "insert_after": "user_group_members"
+            'label': _('Is Item Group'),
+            'fieldname': 'is_item_group',
+            'fieldtype': 'Check',
+            'insert_after': 'user_group_members'
         }
     )
 
 def custom_field_assign_warehouse_staff():
     create_custom_field(
-        'User Group', {
-            "label": _("Assign Warehouse Staff"),
-            "fieldname": "assign_warehouse_staff",
-            "fieldtype": "Check",
-            "insert_after": "schedule_date"
-
+        'Material Request', {
+            'label': _('Assign Warehouse Staff'),
+            'fieldname': 'assign_warehouse_staff',
+            'fieldtype': 'Check',
+            'insert_after': 'schedule_date'
         }
     )

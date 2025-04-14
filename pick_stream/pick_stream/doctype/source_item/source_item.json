@@ -19,18 +19,30 @@
   "stock_details_section",
   "uom",
   "conversion_factor",
-  "scanned",
-  "skipped",
   "column_break_bsbs",
-  "scanned_qty",
   "requested_qty",
   "available_qty",
+  "picking_details_section",
+  "scanned_qty",
+  "column_break_idfm",
+  "scanned",
+  "skipped",
+  "status_info_section",
+  "is_box_item",
+  "column_break_ehjd",
+  "is_other_item",
+  "column_break_ycno",
+  "verified",
+  "column_break_errt",
+  "crate_closed",
   "references_section",
   "crate_code",
   "source",
   "material_request",
   "material_request_item",
-  "stream"
+  "stream",
+  "column_break_dciq",
+  "identifier_code"
  ],
  "fields": [
   {
@@ -81,7 +93,6 @@
   {
    "fieldname": "to_warehouse",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "To Warehouse",
    "options": "Warehouse",
    "read_only": 1
@@ -141,7 +152,7 @@
    "read_only": 1
   },
   {
-   "columns": 2,
+   "columns": 1,
    "fieldname": "requested_qty",
    "fieldtype": "Int",
    "in_list_view": 1,
@@ -150,10 +161,13 @@
    "read_only": 1
   },
   {
+   "columns": 1,
    "default": "0",
    "fieldname": "skipped",
    "fieldtype": "Check",
-   "label": "Skipped"
+   "in_list_view": 1,
+   "label": "Skipped",
+   "read_only": 1
   },
   {
    "fieldname": "stream",
@@ -166,12 +180,14 @@
    "default": "0",
    "fieldname": "scanned",
    "fieldtype": "Check",
-   "label": "Scanned"
+   "label": "Scanned",
+   "read_only": 1
   },
   {
    "fieldname": "description",
    "fieldtype": "Text",
-   "label": "Description"
+   "label": "Description",
+   "read_only": 1
   },
   {
    "columns": 1,
@@ -185,11 +201,11 @@
    "fieldname": "source",
    "fieldtype": "Link",
    "label": "Source",
-   "options": "Crate",
+   "options": "Source",
    "read_only": 1
   },
   {
-   "columns": 2,
+   "columns": 1,
    "default": "0",
    "fieldname": "scanned_qty",
    "fieldtype": "Int",
@@ -197,12 +213,73 @@
    "label": "Scanned Qty",
    "non_negative": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "identifier_code",
+   "fieldtype": "Link",
+   "label": "Identifier Code",
+   "options": "Pick Stream Identifier",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_dciq",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_box_item",
+   "fieldtype": "Check",
+   "label": "Is Box Item"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_other_item",
+   "fieldtype": "Check",
+   "label": "Is Other Item"
+  },
+  {
+   "default": "0",
+   "fieldname": "verified",
+   "fieldtype": "Check",
+   "label": "Verified"
+  },
+  {
+   "fieldname": "picking_details_section",
+   "fieldtype": "Section Break",
+   "label": "Picking Details"
+  },
+  {
+   "fieldname": "column_break_idfm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status_info_section",
+   "fieldtype": "Section Break",
+   "label": "Status Info"
+  },
+  {
+   "fieldname": "column_break_ehjd",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_ycno",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_errt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "crate_closed",
+   "fieldtype": "Check",
+   "label": "Crate Closed"
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-03-12 16:54:12.611111",
+ "modified": "2025-03-25 14:07:46.932410",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Source Item",

@@ -1,8 +1,21 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { useState } from 'react';
+import { 
+  useNavigate, 
+  useSearchParams, 
+  useLoaderData, 
+  LoaderFunctionArgs, 
+  useLocation,
+  useRevalidator
+} from 'react-router';
 import { FaArrowLeft } from 'react-icons/fa6';
+import { FaSpinner } from "react-icons/fa6";
+import {getPickingViewItem} from '../../utils/api';
 import {frappeClient} from '../../utils/client';
 import { useAuth } from '../context/AuthContext';
+import SkipItemModal from '../components/SkipItemModal';
+import ScanItemModal from '../components/ScanItemModal';
+import ScanAsBoxModal from '../components/ScanAsBoxModal';
+import ScanAsOtherModal from '../components/ScanAsOtherModal';
 
 type SourceItem = {
   item_code: string;
@@ -12,26 +25,56 @@ type SourceItem = {
   from_warehouse: string;
 };
 
-export default function Picking() {
+function Picking() {
   const {user} = useAuth();
+  const revalidator = useRevalidator();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const materialRequest = searchParams.get('mr_name');
+  const itemGroup = searchParams.get('item_group');
+  const crateCode = searchParams.get('crate_code');
+  const [activeModal, setActiveModal] = useState<string | null>(null);
   const [isHidden, setIsHidden] = useState(true);
-  const [sourceItem, setSourceItem] = useState<SourceItem | null>(null)
+  const sourceItem = useLoaderData();
+  // const [sourceItem, setSourceItem] = useState<SourceItem | null>(null)
   const [itemBarocde, setItemBarcode] = useState('');
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState('');
   const [itemIsValidated, setItemIsValidated] = useState(false);
   const [scannedQuantity, setScannedQuantity] = useState(0);
   const navigate = useNavigate();
-  const routeParams = useParams();
   function toggleModal() {
     setIsHidden((prevState) => {
       return !prevState;
     });
   }
 
-  // function backToMaterialRequest() {
-  //   navigate(`/pick_stream/material-requests/$`);
-  // }
-  async function validateBarcode() {
+
+  function openModal(modalType: string): void {
+    setActiveModal(modalType);
+  }
+
+  function closeModal(): void {
+    setActiveModal(null);
+  }
+
+  async function skipItem(closeCrate: boolean): Promise<void> {
+    const params = {
+      user: user,
+      mr_name: materialRequest,
+      item_code: sourceItem?.item_code,
+      item_group: itemGroup,
+      scanned_qty: 0,
+      skipped: true,
+      closed_crate: closeCrate,
+    };
+
+    const response = await frappeClient.get('pick_stream.api.submit_scan_details', params);
+    closeModal();
+    revalidator.revalidate();
+  }
+  
+  async function validateBarcode(itemCode: string, itemBarcode: string): Promise<void>  {
     const params = {
       item_code: sourceItem?.item_code,
       barcode: itemBarocde
@@ -41,116 +84,93 @@ export default function Picking() {
     setItemIsValidated(response.message.data);
   }
 
-  async function submitScan() {
-    const params = {
+  async function submitScan(scannedQuantity: number, itemType: string = "", closeCrate: boolean): Promise<void> {
+    const params: any = {
       user: user,
-      mr_name: routeParams.material_request,
+      mr_name: materialRequest,
       item_code: sourceItem?.item_code,
       item_group: searchParams.get('item_group'),
-      crate_code: searchParams.get('crate_code'),
       scanned_qty: scannedQuantity,
       skipped: false,
-      closed_crate: false,
+      closed_crate: closeCrate,
+      as_box: false,
+      as_other: false,
     };
 
-    // const response = await fetch('http://10.0.10.122:8000/api/method/pick_stream.api.submit_scan_details' + new URLSearchParams({...params}));
+    if (itemType === "crate") {
+      params["crate_code"] = searchParams.get('crate_code')!;
+    } else if (itemType === "box") {
+      params.as_box = true;
+    } else if (itemType === "other") {
+      params.as_other = true;
+    }
+
     const response = await frappeClient.get('pick_stream.api.submit_scan_details', params);
 
-    console.log(response);
-    toggleModal();
-  }
-  useEffect(() => {
-    const fetchPickingItem= async function() {
-      const params = {
-        user: user,
-        mr_name: routeParams.material_request,
-        item_group: searchParams.get('item_group'),
-        crate_code: searchParams.get('crate_code')
-      };
-      const response = await frappeClient.get('pick_stream.api.get_material_request_picking_view', params);
-
-      console.log(response.message.data);
-      setSourceItem(response.message.data);
+    if (itemType === "box") {
+      navigate(`/pick_stream/printers?mr_name=${materialRequest}&item_code=${sourceItem?.item_code}&item_type=${itemType}`);
+    } else if (itemType === "other") {
+      navigate(`/pick_stream/printers?mr_name=${materialRequest}&item_code=${sourceItem?.item_code}&item_type=${itemType}`);
     }
-    fetchPickingItem();
-  }, [])
+    console.log(response);
+    closeModal()
+    setItemIsValidated(false);
+    revalidator.revalidate();
+  }
 
   return (
     <main className="relative min-h-screen w-full flex flex-col pb-10">
-      <header className="flex flex-row justify-between items-center px-4 py-6 mb-10 bg-gray-200">
-        <button className="cursor-pointer">
-          <FaArrowLeft />
+      <div className="h-full flex flex-col justify-center items-center" hidden={revalidator.state === "idle"}>
+        <FaSpinner size={32}/>
+      </div> 
+
+      <header className='flex flex-row items-center px-4 py-6 bg-[#171717] text-white relative'>
+        <button onClick={() =>navigate(`/pick_stream/material-requests/${materialRequest}`)}>
+          <FaArrowLeft size={24}/>
         </button>
 
-        <p>MAT-MR-2025-01390</p>
+        <p className='mx-auto text-xl font-semibold'>{crateCode}</p>
       </header>
 
-      <div className="px-4">
-        {!isHidden ? 
-            (
-            <>
-            <div className="modal-backdrop" onClick={toggleModal}></div>
-            <div className="modal">
-              {itemIsValidated ? 
-              
-              <div className="flex flex-col items-center modal-content">
-                <p className="mb-8 rounded-[6px] bg-[#e2e2e2] p-[6px]">
-                  {sourceItem?.item_code}
-                </p>
-
-                <div className="input-container w-full">
-                  <label htmlFor="scanned_quantity">
-                    Scanned Quantity
-                    <input
-                      className="input-field mb-0"
-                      name="scanned_quantity"
-                      id="scanned_quantity"
-                      type="number"
-                      placeholder="Scanned Quantity"
-                      value={scannedQuantity}
-                      onChange={(e) => setScannedQuantity(parseInt(e.target.value))}
-                    />
-                  </label>
-                </div>
-
-                <button className="scan-btn" type="submit" onClick={submitScan}>
-                  Submit Scan
-                </button>
-              
-              </div>
-              :    
-              <div className="flex flex-col items-center modal-content">
-                <p className="mb-8 rounded-[6px] bg-[#e2e2e2] p-[6px]">
-                  {sourceItem?.item_code}
-                </p>
-
-                <div className="input-container w-full">
-                  <label htmlFor="item_barcode">
-                    Item BarCode 
-                    <input
-                      className="input-field mb-0"
-                      name="item_barcode"
-                      id="item_barcode"
-                      type="text"
-                      placeholder="Item Barcode"
-                      value={itemBarocde}
-                      onChange={(e) => setItemBarcode(e.target.value)}
-                    />
-                  </label>
-                </div>
-
-                <button className="scan-btn" type="submit" onClick={validateBarcode}>
-                  Verify Barcode
-                </button>
-              
-              </div>
-              }
-            </div>
-            </>
-        ) 
-        : 
-            
-        ''
+      <div className="px-4 mt-10">
+        {activeModal === "skip" && 
+        <SkipItemModal 
+          skipItem={skipItem} 
+          closeModal={closeModal} 
+        />
+        }
+        {activeModal === "scan" && 
+        <ScanItemModal 
+          itemCode={sourceItem?.item_code} 
+          itemBarcode={itemBarocde}
+          setItemBarcode={setItemBarcode}
+          validateBarcode={validateBarcode}
+          itemIsValidated={itemIsValidated}
+          submitScan={submitScan} 
+          closeModal={closeModal} 
+        />
+        }
+        {activeModal === "scanBox" && 
+        <ScanAsBoxModal 
+          itemCode={sourceItem?.item_code} 
+          itemBarcode={itemBarocde}
+          setItemBarcode={setItemBarcode}
+          validateBarcode={validateBarcode}
+          itemIsValidated={itemIsValidated}
+          submitScan={submitScan} 
+          closeModal={closeModal} 
+        />
+        }
+        {activeModal === "scanOther" && 
+        <ScanAsOtherModal 
+          itemCode={sourceItem?.item_code} 
+          itemBarcode={itemBarocde}
+          setItemBarcode={setItemBarcode}
+          validateBarcode={validateBarcode}
+          itemIsValidated={itemIsValidated}
+          submitScan={submitScan} 
+          closeModal={closeModal} 
+        />
         }
         <form className="">
 
@@ -171,7 +191,7 @@ export default function Picking() {
 
           <div className="input-container">
             <label htmlFor="item_description">
-              Item Description
+              Description
               <input
                 className="input-field"
                 name="item_description"
@@ -186,7 +206,7 @@ export default function Picking() {
 
           <div className="input-container">
             <label htmlFor="item_uom">
-              Unit of Measure
+              UOM
               <input
                 className="input-field"
                 name="item_uom"
@@ -195,6 +215,22 @@ export default function Picking() {
                 placeholder="Unit of Measure"
                 disabled
                 value={sourceItem?.uom}
+              />
+            </label>
+          </div>
+
+
+          <div className="input-container">
+            <label htmlFor="requested_quantity">
+              Requested Quantity
+              <input
+                className="input-field"
+                name="requested_quantity"
+                id="requested_quantity"
+                type="text"
+                placeholder="Requested Quantity"
+                disabled
+                value={sourceItem?.requested_qty}
               />
             </label>
           </div>
@@ -213,27 +249,34 @@ export default function Picking() {
               />
             </label>
           </div>
-
-          <div className="input-container">
-            <label htmlFor="requested_quantity">
-              Requested Quantity
-              <input
-                className="input-field"
-                name="requested_quantity"
-                id="requested_quantity"
-                type="text"
-                placeholder="Requested Quantity"
-                disabled
-                value={sourceItem?.requested_qty}
-              />
-            </label>
+          
+          <div className='grid grid-cols-2 grid-rows-2 gap-x-2 gap-y-1'>
+            <button className="modal-btn bg-red-700" type="button" onClick={() => setActiveModal("skip")}>
+              Skip
+            </button>
+            <button className="modal-btn" type="button" onClick={() => setActiveModal("scan")}>
+              Scan
+            </button>
+            <button className="modal-btn" type="button" onClick={() => setActiveModal("scanBox")}>
+              Scan as Box
+            </button>
+            <button className="modal-btn" type="button" onClick={() => setActiveModal("scanOther")}>
+              Scan as Other
+            </button>
           </div>
-
-          <button className="scan-btn" type="button" onClick={toggleModal}>
-            Scan
-          </button>
         </form>
       </div>
     </main>
   );
+}
+
+export default Picking;
+
+export async function pickingViewLoader({request}: LoaderFunctionArgs) {
+  const url = new URL(request.url); 
+  const user = localStorage.getItem('user');
+  const mr_name = url.searchParams.get('mr_name');
+  const item_group = url.searchParams.get('item_group');
+  const crate_code = url.searchParams.get('crate_code');
+  return await getPickingViewItem(user!, mr_name!, item_group!, crate_code!);
 }

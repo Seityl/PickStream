@@ -2,15 +2,10 @@
 # For license information, please see license.txt
 
 from frappe.model.document import Document
-# from pick_stream.api import update_crate
+
+from pick_stream.core import update_crate
 
 class Stream(Document):
-    pass
-    # def on_update(self):
-    #     update_crate(self)
-
-    def validate(self):
-        self.update_status(self.status)
-
-    def update_status(self, status:str):
-        self.db_set("status", status)
+    def on_update(self):
+        if self.is_new():
+            return update_crate(self)

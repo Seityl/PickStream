@@ -68,7 +68,7 @@
    "fieldname": "items",
    "fieldtype": "Table",
    "label": "Items",
-   "options": "Crate Log Item",
+   "options": "Source Item",
    "reqd": 1
   },
   {
@@ -122,7 +122,7 @@
  "hide_toolbar": 1,
  "in_create": 1,
  "links": [],
- "modified": "2025-01-23 14:24:58.845361",
+ "modified": "2025-03-24 15:01:29.716700",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Crate Log",
@@ -130,16 +130,31 @@
  "owner": "Administrator",
  "permissions": [
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "System Manager",
-   "share": 1,
-   "write": 1
+   "share": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager",
+   "share": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock User",
+   "share": 1
   }
  ],
  "search_fields": "crate_code, stream",

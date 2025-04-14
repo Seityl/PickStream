@@ -11,5 +11,6 @@ frappe.ui.form.on("Stream", {
     refresh: function(frm) {
         frm.disable_save();
         $('.row-check').hide();
+        $('.form-message').hide();
     }
 })

@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import {useParams, Link, useLocation, useNavigate} from 'react-router';
-import { useAuth } from '../context/AuthContext';
+import {useParams, useNavigate, useLoaderData, LoaderFunctionArgs, redirect} from 'react-router';
+import { FaArrowLeft } from "react-icons/fa";
 import {frappeClient} from '../../utils/client';
+import {getItemGroupData} from '../../utils/api';
+
 import Crate from '../components/Crate';
 import { FaPlus } from "react-icons/fa";
 
@@ -11,56 +13,24 @@ type crate = {
   status: string;
 }
 
-// export async function clientLoader() {
-//   const res = await fetch(`/api/products/${params.pid}`);
-//   const product = await res.json();
-//   return product;
-// }
-
-export default function ItemGroupView(props: any) {
-  const {itemGroup} = props;
-  const {user} = useAuth();
-  const location = useLocation();
+function ItemGroupView() {
   const navigate = useNavigate();
-  const [viewData, setViewData] = useState(null);
+  const viewData = useLoaderData();
   const [isHidden, setIsHidden] = useState(true);
   const [crateCode, setCrateCode] = useState('');
-  const [crates, setCrates] = useState<crate[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
   const [isValid, setIsValid] = useState(false);
-  const queryParams = useParams();
-  const materialRequest = queryParams.material_request;
-  
-  
-  useEffect(() => {
-    const fetchItemGroupViewData = async function () {
-      const queryParams = {
-        user: user,
-        mr_name: materialRequest,
-        item_group: itemGroup,
-      };
-  
-      const response = await frappeClient.get('pick_stream.api.get_material_request_item_group_view', queryParams);
-      
-      if (response.message.data.in_progress) {
-        setCrateCode(response.message.data.crate_code);
-
-        navigate(`/pick_stream/picking/${materialRequest}?item_group=${itemGroup}&crate_code=${crateCode}`);
-      } else {
-        
-
-        setViewData(response.message.data);
-        setCrates(response.message.data.crates);
-      }
-    }
-    fetchItemGroupViewData();
-  }, [itemGroup, location])
+  const routeParams = useParams();
+  const materialRequest = routeParams.material_request;
+  const itemGroup = decodeURIComponent(routeParams.item_group!);
 
   useEffect(() => {
     if (crateCode && isValid) {
-      navigate(`/pick_stream/picking/${materialRequest}?item_group=${itemGroup}&crate_code=${crateCode}`);
+      redirect(`/pick_stream/picking?mr_name=${materialRequest}&item_group=${itemGroup}&crate_code=${crateCode}`);
     }
 
-  }, [crateCode, isValid])
+  }, [isValid])
 
   function toggleModal() {
     setIsHidden((prevState) => {
@@ -74,53 +44,88 @@ export default function ItemGroupView(props: any) {
     };
 
     const response = await frappeClient.get('pick_stream.api.validate_crate', params);
-    console.log(response.message.data);
     setIsValid(response.message.data);
   }
 
   return ( 
-    <div className='mt-10'>
-      {!isHidden ? 
-        <>
-          <div className="modal-backdrop" onClick={toggleModal}></div>
+    <main>
+      <header className='flex flex-row items-center px-4 py-6 bg-[#171717] text-white relative'>
+        <button onClick={() =>navigate(`/pick_stream/material-requests/${materialRequest}`)}>
+          <FaArrowLeft size={24}/>
+        </button>
 
-          <div className="modal">
-            <div className="flex flex-col items-center modal-content">
-                <p className=''>Enter Crate Code</p>
+        <p className='mx-auto text-xl font-semibold'>{itemGroup}</p>
+      </header>
+      <div className='px-4 mt-10'>
+        {!isHidden ? 
+          <>
+            <div className="modal-backdrop" onClick={toggleModal}></div>
 
-                <div className="input-container w-full">
-                    <input
-                      className="input-field mb-0 w-full"
-                      name="crate_code"
-                      id="crate_code"
-                      type="text"
-                      placeholder="Crate Code"
-                      value={crateCode}
-                      onChange={(e) => setCrateCode(e.target.value)}
-                    />
+            <div className="modal">
+              <div className="flex flex-col items-center modal-content">
+                  <p className=''>Enter Crate Code</p>
+
+                  <div className="input-container w-full">
+                      <input
+                        className="input-field mb-0 w-full"
+                        name="crate_code"
+                        id="crate_code"
+                        type="text"
+                        placeholder="Crate Code"
+                        value={crateCode}
+                        onChange={(e) => {setCrateCode(e.target.value);}}
+                      />
+                  </div>
+
+                  <button className="modal-btn" type="submit" onClick={() => validateCrate()}>
+                  {error ? error : !isLoading ? 'Select Crate' : 'Checking Availability...'}
+                  </button>
                 </div>
-
-                <button className="scan-btn" type="submit" onClick={() => validateCrate()}>
-                    Select Crate
-                </button>
               </div>
-            </div>
-        </>
-        :  
-        ''
-      }
-     
-      <p>{itemGroup}</p>
+          </>
+          :  
+          ''
+        }
 
-      <p>Crates</p>
-      <button className='create-crate-btn' onClick={toggleModal}><FaPlus /></button>
-      <div className='mt-10'>
-        <ul className='flex flex-col gap-y-3'>
-          {crates.length > 0 && crates.map((crate, index) => {
-            return <li key={index}><Crate /></li>
-          })}
-        </ul>
+        <p className='text-2xl font-bold mb-10'>Crates</p>
+        <button className='create-crate-btn' onClick={toggleModal}><FaPlus /></button>
+        <div className='mt-10'>
+          <ul className='flex flex-col gap-y-3'>
+            {viewData.crates.length > 0 && viewData.crates.map((crate: crate, index: number) => {
+              return <li key={index}><Crate {...crate} /></li>
+            })}
+            {viewData.crates.length === 0 && 
+              (
+                <div>
+                  <p className='text-center'>This Item Group Has No Crates.</p>
+                </div>
+              )
+            }
+          </ul>
+        </div>
       </div>
-    </div>
+    </main>
   );
+}
+
+export default ItemGroupView;
+
+export async function itemGroupLoader({params}: LoaderFunctionArgs){
+  const user = localStorage.getItem('user');
+  const {material_request, item_group} = params;
+
+  try {
+    const data = await getItemGroupData(user!, material_request!, decodeURIComponent(item_group!));
+  
+    if (data.in_progress) {
+      const crate_code = data.crate_code;
+  
+      return redirect(`/pick_stream/picking?mr_name=${material_request}&item_group=${item_group}&crate_code=${crate_code}`);
+    } else {
+      return data;
+    }
+  } catch(err) {
+    console.log('error: ', err);
+  }
+
 }

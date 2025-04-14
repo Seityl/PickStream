@@ -1,14 +1,7 @@
 import React, {} from 'react';
 import { AiFillProfile } from "react-icons/ai";
 import { Link } from 'react-router';
-
-type MatReqItem = {
-  name: string;
-  target_warehouse: string;
-  source_warehouse: string;
-  status: string;
-  item_group_availability: Record<string, boolean>;
-};
+import { MatReqItem } from '../../types';
 
 
 export default function MaterialRequestItem(props: MatReqItem) {

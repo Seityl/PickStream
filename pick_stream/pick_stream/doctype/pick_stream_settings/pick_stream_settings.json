@@ -5,26 +5,27 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "warehouse_settings_section",
   "default_set_from_warehouse",
   "cups_settings_section",
   "host",
   "column_break_ujis",
   "port",
+  "crate_settings_section",
+  "crate_settings",
   "barcode_settings_section",
-  "box_prefix",
-  "column_break_eqmm",
-  "other_prefix"
+  "item_types"
  ],
  "fields": [
   {
    "default": "KG Warehouse - JP",
-   "description": "Default warehouse to source from if no source warehouse is set on a Material Request.",
    "fieldname": "default_set_from_warehouse",
    "fieldtype": "Link",
    "label": "Default Set From Warehouse",
    "options": "Warehouse"
   },
   {
+   "description": "The host and port on which the CUPS server is hosted.",
    "fieldname": "cups_settings_section",
    "fieldtype": "Section Break",
    "label": "CUPS Settings"
@@ -44,30 +45,40 @@
    "label": "Port"
   },
   {
+   "description": "Types of items which are not able to be transported in crates and their barcode prefixes.",
    "fieldname": "barcode_settings_section",
    "fieldtype": "Section Break",
    "label": "Barcode Settings"
   },
   {
-   "fieldname": "box_prefix",
-   "fieldtype": "Data",
-   "label": "Box Prefix"
+   "fieldname": "item_types",
+   "fieldtype": "Table",
+   "label": "Item Types",
+   "options": "Pick Stream Item Type"
   },
   {
-   "fieldname": "column_break_eqmm",
-   "fieldtype": "Column Break"
+   "fieldname": "crate_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Crate Settings"
   },
   {
-   "fieldname": "other_prefix",
-   "fieldtype": "Data",
-   "label": "Other Prefix"
+   "fieldname": "crate_settings",
+   "fieldtype": "Table",
+   "label": "Crate Settings",
+   "options": "Crate Settings"
+  },
+  {
+   "description": "Default warehouse to source from if no source warehouse is set on a Material Request.",
+   "fieldname": "warehouse_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Warehouse Settings"
   }
  ],
  "hide_toolbar": 1,
  "in_create": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-03-22 12:57:55.405674",
+ "modified": "2025-03-25 14:14:29.403336",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Pick Stream Settings",

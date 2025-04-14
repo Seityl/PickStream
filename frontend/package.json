@@ -11,8 +11,10 @@
     "copy-html-entry": "cp ../pick_stream/public/frontend/index.html ../pick_stream/www/pick_stream.html"
   },
   "dependencies": {
+    "@react-router/node": "^7.4.0",
     "@tailwindcss/vite": "^4.0.13",
     "frappe-js-sdk": "^1.8.0",
+    "motion": "^12.6.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-icons": "^5.5.0",

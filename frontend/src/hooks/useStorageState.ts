@@ -29,12 +29,15 @@ export function useStorageState(key: string): UseStateHook<string> {
   useEffect(() => {
     try {
       if (typeof localStorage !== 'undefined') {
-        setState(localStorage.getItem(key));
+        const newValue = localStorage.getItem(key);
+        if (newValue !== state) {
+          setState(newValue);
+        }
       }
     } catch (e) {
       console.error('Local Storage is unavailable:', e);
     }
-  }, [key]);
+  }, [state, key]);
 
   const setValue = useCallback(
     (value: string | null) => {

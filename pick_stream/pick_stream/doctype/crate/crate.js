@@ -1,4 +1,4 @@
-// Copyright (c) 2025, Jollys Pharmacy Ltd. and contributors
+// Copyright (c) 2025, Jollys Pharmacy Limited and contributors
 // For license information, please see license.txt
 
 frappe.ui.form.on("Crate", {
@@ -9,7 +9,9 @@ frappe.ui.form.on("Crate", {
         frm.set_df_property('items', 'cannot_delete_rows', 1);
     },
     refresh: function(frm) {
-        frm.disable_save();
+        if (!frm.doc.__islocal) {
+            frm.disable_save();
+        }
         $('.row-check').hide();
     }
 })

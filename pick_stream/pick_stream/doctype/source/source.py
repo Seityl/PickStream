@@ -9,13 +9,60 @@ from frappe.model.document import Document
 from frappe.utils import cint, floor, get_link_to_form
 from frappe.utils.nestedset import get_descendants_of
 
-from pick_stream.core import get_pick_stream_settings, update_stream
+from pick_stream.core import get_pick_stream_settings, create_stream, update_stream
 from pick_stream.api_utils import exception_handler
 
 class Source(Document):
     def before_save(self):
         self.set_item_locations()
 
+    def on_update(self):
+        self.update_streams()
+        
+    def update_streams(self):
+        crate_codes = self.get_crate_codes()
+        if not crate_codes:
+            return
+
+        for crate_code in crate_codes:
+            stream_list = frappe.db.get_list('Stream',
+                filters = {
+                    'crate_code': crate_code,
+                    'material_request': self.material_request,
+                    'item_group': self.item_group,
+                    'user': self.user,
+                    'source': self.name,
+                    'status': 'Picking'
+                },
+                fields = ['name'],
+                order_by = 'creation desc',
+                limit_page_length = 1
+            )
+            if not stream_list:
+                return create_stream(self, crate_code)
+            else:
+                stream_name = stream_list[0].name
+                if crate_code:
+                    return update_stream(self, stream_name, 'Waiting')
+                return update_stream(self, stream_name)
+
+    def get_crate_codes(self):
+        out = {}
+        for item in self.items:
+            if not item.crate_code:
+                continue
+            out[item.crate_code] = out.get(item.crate_code, False) or (item.crate_closed == 1)
+        return out
+        
+        # for item in self.items:
+        #     if not item.crate_code:
+        #         continue
+        #     if item.crate_code not in out:
+        #         out[item.crate_code] = (item.crate_closed == 1)
+        #     else:
+        #         out[item.crate_code] = out[item.crate_code] and (item.crate_closed == 1)
+        # return out
+        
     def set_item_locations(self):
         settings = get_pick_stream_settings()
         items = self.aggregate_item_qty()

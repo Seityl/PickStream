@@ -37,7 +37,6 @@ def exception_handler(e: Exception) -> None:
     """Global exception handler for API endpoints"""
     frappe.log_error(title="Pick Stream App Error", message=frappe.get_traceback())
     status_code = getattr(e, 'http_status_code', 500)
-    frappe.clear_messages()
     return generate_response(status_code, e)
 
 def generate_key(user: str) -> Dict[str, str]:

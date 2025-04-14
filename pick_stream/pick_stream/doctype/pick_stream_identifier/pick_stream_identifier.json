@@ -1,20 +1,88 @@
 {
  "actions": [],
+ "allow_copy": 1,
  "creation": "2025-03-22 12:42:24.507995",
  "default_view": "List",
  "description": "Unique identifiers for Boxes and Other items.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "type"
+  "section_break_uhtf",
+  "user",
+  "material_request",
+  "item_details_section",
+  "item_code",
+  "column_break_zrfz",
+  "item_type",
+  "warehouse_details_section",
+  "from_warehouse",
+  "column_break_lobp",
+  "to_warehouse"
  ],
  "fields": [
   {
    "default": "box",
-   "fieldname": "type",
+   "fieldname": "item_type",
    "fieldtype": "Select",
-   "label": "Type",
+   "label": "Item Type",
    "options": "box\nother",
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_details_section",
+   "fieldtype": "Section Break",
+   "label": "Item Details"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item Code",
+   "options": "Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_zrfz",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "warehouse_details_section",
+   "fieldtype": "Section Break",
+   "label": "Warehouse Details"
+  },
+  {
+   "fieldname": "from_warehouse",
+   "fieldtype": "Link",
+   "label": "From Warehouse",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_lobp",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "to_warehouse",
+   "fieldtype": "Link",
+   "label": "To Warehouse",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_uhtf",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "material_request",
+   "fieldtype": "Link",
+   "label": "Material Request",
+   "options": "Material Request",
    "read_only": 1
   }
  ],
@@ -22,7 +90,7 @@
  "hide_toolbar": 1,
  "in_create": 1,
  "links": [],
- "modified": "2025-03-22 13:12:42.388643",
+ "modified": "2025-03-25 14:58:26.685928",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Pick Stream Identifier",

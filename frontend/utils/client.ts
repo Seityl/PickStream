@@ -2,8 +2,8 @@ import axios from 'axios';
 import { FrappeApp } from 'frappe-js-sdk';
 
 const clientConfig = {
-  baseUrl: 'http://10.0.10.122:8000/api/method',
-  domain: 'http://10.0.10.122:8000',
+  baseUrl: 'http://10.0.10.122/api/method',
+  domain: 'http://10.0.10.122',
 };
 
 const frappeApp = new FrappeApp(clientConfig.domain);

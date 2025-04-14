@@ -2,6 +2,7 @@
 import {frappeAuth} from '../../utils/client';
 import {
   useContext,
+  useEffect,
   createContext,
   type PropsWithChildren,
   useState,
@@ -32,10 +33,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useStorageState('user');
   const [isLoading, setIsLoading] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(
-    !!localStorage.getItem('user')
+    !!user
   );
   
   const auth = frappeAuth;
+
+  useEffect(() => {
+    setIsAuthenticated(!!user); // Set true if `user` is non-null, false otherwise
+  },)
 
   return (
     <AuthContext.Provider
@@ -51,11 +56,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
             if (response.message === 'Logged In') {
               const loggedInUser = await auth.getLoggedInUser();
+              console.log("user:", loggedInUser);
               setUser(loggedInUser);
               setIsAuthenticated(true);
             }
 
-            console.log("user:", user);
             setIsLoading(false);
           } catch (e) {
             setIsLoading(false);

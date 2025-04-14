@@ -1,4 +1,4 @@
-// Copyright (c) 2025, Jollys Pharmacy Ltd. and contributors
+// Copyright (c) 2025, Jollys Pharmacy Limited and contributors
 // For license information, please see license.txt
 
 frappe.ui.form.on("Crate Log", {
@@ -7,5 +7,8 @@ frappe.ui.form.on("Crate Log", {
         frm.get_field('items').grid.cannot_add_rows = true;
         // Hides Delete button from items child table
         frm.set_df_property('items', 'cannot_delete_rows', 1);
+    },
+    refresh: function(frm) {
+        $('.row-check').hide();
     }
 });

@@ -1,12 +1,13 @@
 from . import __version__ as app_version
 
-app_name = "pick_stream"
-app_title = "Pick Stream"
-app_publisher = "Jollys Pharmacy Limited"
-app_description = "A robust, efficient, and accurate inventory management module that simplifies the replenishment process, reduces errors, and enhances operational efficiency across stores."
-app_email = "cdgrant@jollysonline.com"
-app_license = "mit"
-# required_apps = []
+app_name = 'pick_stream'
+app_title = 'Pick Stream'
+app_publisher = 'Jollys Pharmacy Limited'
+app_description = 'A robust, efficient, and accurate inventory management module that simplifies the replenishment process, reduces errors, and enhances operational efficiency across stores.'
+app_email = 'cdgrant@jollysonline.com'
+app_license = 'MIT'
+
+required_apps = ['ERPNext']
 
 # Includes in <head>
 # ------------------
@@ -31,7 +32,9 @@ app_license = "mit"
 
 # include js in doctype views
 
-doctype_js = {"Material Request" : "public/js/custom_Material Request.js"}
+doctype_js = {
+    'Material Request': 'public/js/custom_Material Request.js'
+}
 
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -74,7 +77,7 @@ doctype_js = {"Material Request" : "public/js/custom_Material Request.js"}
 # before_install = "pick_stream.install.before_install"
 # after_install = "pick_stream.install.after_install"
 
-after_migrate = "pick_stream.install.after_install"
+after_migrate = 'pick_stream.install.after_install'
 
 # Uninstallation
 # ------------
@@ -181,7 +184,7 @@ doc_events = {
 # Ignore links to specified DocTypes when deleting documents
 # -----------------------------------------------------------
 
-ignore_links_on_delete = ['Crate', '']
+ignore_links_on_delete = ['Crate']
 
 # Request Events
 # ----------------
@@ -225,10 +228,10 @@ ignore_links_on_delete = ['Crate', '']
 # ]
 
 # Automatically update python controller files with type annotations for this app.
-# export_python_type_annotations = True
+# export_python_type_annotations = False
 
-# default_log_clearing_doctypes = {
-# 	"Logging DocType Name": 30  # days to retain logs
-# }
+default_log_clearing_doctypes = {
+	'Crate Log': 90  # of days to retain logs
+}
 
 website_route_rules =[{'from_route': '/pick_stream/<path:app_path>', 'to_route': 'pick_stream'},]

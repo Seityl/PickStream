@@ -20,9 +20,9 @@
   background-color: rgb(248, 248, 248);
 }
 
-.scan-btn {
+.modal-btn {
   width: 100%;
-  margin-top: 24px;
+  margin-top: 8px;
   padding: 0.5rem 0;
   color: white;
   background-color: #171717;
@@ -125,18 +125,23 @@
 }
 
 .create-crate-btn {
+  position: absolute;
+  bottom: 32px;
+  right: 32px;
+  z-index: 5;
   display: flex;
   justify-content: center;
   align-items: center;
-  background-color: #00ccff;
-  width: 25px;
-  height: 25px;
+  background-color: #e2e2e2;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  padding: 0.5rem 1rem;
-  color: white;
-  font-size: 12px;
-  font-weight: 700;
+  padding: 0.5rem;
+  color: black;
+  font-size: 24px;
+  cursor: pointer;
 }
+
 
 .crate {
   display: flex;
@@ -159,7 +164,7 @@
 }
 
 
-.crate-name {
+.crate-code {
   margin-left: 0.5rem;
   margin-right: auto;
 }
@@ -173,4 +178,32 @@
   border-radius: 6px;
   width: 100%;
   cursor: pointer;
+}
+
+.nav-link {
+  color: #a0aec0;
+}
+.nav-link.active {
+  color: #171717;
+}
+
+
+.spin {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  font-size: 48px;
+  animation-name: spin;
+  animation-duration: 5000ms;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear; 
+}
+
+@keyframes spin {
+  from {
+      transform:rotate(0deg);
+  }
+  to {
+      transform:rotate(360deg);
+  }
 }

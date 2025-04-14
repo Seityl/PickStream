@@ -6,11 +6,16 @@
  "document_type": "Document",
  "engine": "InnoDB",
  "field_order": [
+  "source_details_section",
   "material_request",
   "user",
   "column_break_qpvc",
   "item_group",
   "status",
+  "section_break_ivbn",
+  "from_warehouse",
+  "column_break_gzsj",
+  "to_warehouse",
   "section_break_8u0d",
   "amended_from",
   "items"
@@ -18,7 +23,8 @@
  "fields": [
   {
    "fieldname": "section_break_8u0d",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Item Details"
   },
   {
    "fieldname": "amended_from",
@@ -85,13 +91,41 @@
   {
    "fieldname": "column_break_qpvc",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_ivbn",
+   "fieldtype": "Section Break",
+   "label": "Warehouse Details"
+  },
+  {
+   "fieldname": "from_warehouse",
+   "fieldtype": "Link",
+   "label": "From Warehouse",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_gzsj",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "to_warehouse",
+   "fieldtype": "Link",
+   "label": "To Warehouse",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_details_section",
+   "fieldtype": "Section Break",
+   "label": "Source Details"
   }
  ],
  "hide_toolbar": 1,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-03-19 14:56:04.586719",
+ "modified": "2025-03-23 03:22:57.528970",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Source",
