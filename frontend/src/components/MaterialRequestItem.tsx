@@ -28,7 +28,9 @@ export default function MaterialRequestItem(props: MatReqItem) {
         {target_warehouse}</p>
 
         <div className='matreq-item-available-groups'>
-         
+         {item_group_availability.map((item_group: any)=> {
+          return <div className={`item-group ${!item_group.available ? 'not-available' : 'available'}`}><p>{item_group.name}: {item_group.reason}</p></div>;
+         })}
         </div>
       </div>
     </Link>

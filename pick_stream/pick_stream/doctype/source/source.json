@@ -16,9 +16,12 @@
   "from_warehouse",
   "column_break_gzsj",
   "to_warehouse",
+  "section_break_uwcx",
+  "scan_pointer",
   "section_break_8u0d",
   "amended_from",
-  "items"
+  "items",
+  "item_crates"
  ],
  "fields": [
   {
@@ -119,13 +122,31 @@
    "fieldname": "source_details_section",
    "fieldtype": "Section Break",
    "label": "Source Details"
+  },
+  {
+   "fieldname": "section_break_uwcx",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "scan_pointer",
+   "fieldtype": "Int",
+   "label": "Scan Pointer",
+   "non_negative": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_crates",
+   "fieldtype": "Table",
+   "label": "Item Crates",
+   "options": "Item Crates"
   }
  ],
  "hide_toolbar": 1,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-03-23 03:22:57.528970",
+ "modified": "2025-05-22 15:18:52.235794",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Source",
@@ -147,6 +168,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],

@@ -6,71 +6,121 @@ from collections import OrderedDict
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint, floor, get_link_to_form
 from frappe.utils.nestedset import get_descendants_of
+from frappe.utils import cint, flt, floor, get_link_to_form
 
+import pick_stream
 from pick_stream.core import get_pick_stream_settings, create_stream, update_stream
-from pick_stream.api_utils import exception_handler
 
 class Source(Document):
     def before_save(self):
         self.set_item_locations()
 
-    def on_update(self):
+    def validate(self):
+        self.validate_scanned_qty()
+        self.validate_stock_qty()
         self.update_streams()
-        
+
+    def on_update(self):
+        if self.is_completed():
+            self.db_set('status', 'Completed')
+            self.update_linked_streams_status()
+            
+    def is_completed(self):
+        return all(item.scanned or item.skipped for item in self.items)
+
+    def update_linked_streams_status(self):
+        """Update all linked streams to 'Waiting' status after completion of source"""
+        streams = frappe.db.get_list('Stream',
+            filters={'source': self.name},
+            fields=['name']
+        )
+        for stream in streams:
+            stream = frappe.get_doc('Stream', stream.name)
+            if stream.status != 'Completed':
+                stream.db_set('status', 'Waiting')
+            
+        frappe.db.commit()
+
     def update_streams(self):
-        crate_codes = self.get_crate_codes()
-        if not crate_codes:
+        crates_status = self.get_crates_status()
+        
+        if not crates_status:
             return
 
-        for crate_code in crate_codes:
-            stream_list = frappe.db.get_list('Stream',
-                filters = {
+        for crate_code, is_closed in crates_status.items():
+            stream_name = frappe.db.get_value(
+                'Stream', 
+                {
                     'crate_code': crate_code,
-                    'material_request': self.material_request,
-                    'item_group': self.item_group,
-                    'user': self.user,
-                    'source': self.name,
-                    'status': 'Picking'
-                },
-                fields = ['name'],
-                order_by = 'creation desc',
-                limit_page_length = 1
+                    'source': self.name
+                }, 
+                'name'
             )
-            if not stream_list:
-                return create_stream(self, crate_code)
+            status = 'Waiting' if is_closed else None
+            if not stream_name:
+                stream_name = create_stream(self, crate_code)
+                update_stream(self, stream_name, status)
             else:
-                stream_name = stream_list[0].name
-                if crate_code:
-                    return update_stream(self, stream_name, 'Waiting')
-                return update_stream(self, stream_name)
+                update_stream(self, stream_name, status)
 
-    def get_crate_codes(self):
-        out = {}
-        for item in self.items:
-            if not item.crate_code:
+    def get_crates_status(self):
+        """Returns {crate_code: True only if all items for crate are closed}"""
+        crates_status = frappe._dict()
+        
+        for row in self.item_crates:
+            if row.crate_code not in crates_status:
+                crates_status[row.crate_code] = True
+            
+            if not row.crate_closed:
+                crates_status[row.crate_code] = False
+        
+        return crates_status
+    
+    def validate_stock_qty(self):
+        for row in self.items:
+            if not row.scanned_qty:
                 continue
-            out[item.crate_code] = out.get(item.crate_code, False) or (item.crate_closed == 1)
-        return out
+
+            bin_qty = frappe.db.get_value('Bin', {'item_code': row.item_code, 'warehouse': row.from_warehouse}, 'actual_qty')
+
+            if row.available_qty != flt(bin_qty):
+                row.available_qty = flt(bin_qty)
+
+            if row.available_qty > flt(bin_qty):
+                raise pick_stream.exceptions.ValidationError(f'Scanned qty {row.scanned_qty} exceeds available qty {bin_qty} for item {row.item_code}')
+
+    def validate_scanned_qty(self):
+        item_qty_map = {}
         
-        # for item in self.items:
-        #     if not item.crate_code:
-        #         continue
-        #     if item.crate_code not in out:
-        #         out[item.crate_code] = (item.crate_closed == 1)
-        #     else:
-        #         out[item.crate_code] = out[item.crate_code] and (item.crate_closed == 1)
-        # return out
+        for crate in self.item_crates:
+            if crate.item_code in item_qty_map:
+                item_qty_map[crate.item_code] += crate.qty
+            else:
+                item_qty_map[crate.item_code] = crate.qty
         
+        for row in self.items:
+            row.scanned_qty = item_qty_map.get(row.item_code, 0)
+            
+            if not row.scanned_qty:
+                continue
+                
+            if row.scanned_qty <= 0:
+                raise pick_stream.exceptions.ValidationError(
+                    f'Scanned qty {row.scanned_qty} cannot be less than or equal to 0 for item {row.item_code}'
+                )
+                
+            if row.scanned_qty > row.requested_qty:
+                raise pick_stream.exceptions.ValidationError(
+                    f'Scanned qty {row.scanned_qty} exceeds requested qty {row.requested_qty} for item {row.item_code}'
+                )          
+            
     def set_item_locations(self):
-        settings = get_pick_stream_settings()
         items = self.aggregate_item_qty()
         scanned_items_details = self.get_scanned_items_details(items)
 
-        self.item_location_map = frappe._dict()
-
-        # Default to sourcing from KG if no source warehouse is set on Material Request
+        settings = get_pick_stream_settings()
+        # Set default source warehouse if none is set on Material Request
         default_set_from_warehouse = settings.default_set_from_warehouse
         set_from_warehouse = frappe.db.get_value('Material Request', self.material_request, 'set_from_warehouse')
         from_warehouses = [set_from_warehouse] if set_from_warehouse else [default_set_from_warehouse]
@@ -78,11 +128,19 @@ class Source(Document):
 
         # Create replica before resetting, to handle empty table on update after submit.
         locations_replica = self.get('items')
+
         # Reset Items
-        self.delete_key('items')
+        reset_rows = []
+        for row in self.get('items'):
+            if not row.scanned_qty:
+                reset_rows.append(row)
+
+        for row in reset_rows:
+            self.remove(row)
 
         updated_locations = frappe._dict()
-        
+        self.item_location_map = frappe._dict()
+
         for item_doc in items:
             item_code = item_doc.item_code
             self.item_location_map.setdefault(
@@ -92,7 +150,7 @@ class Source(Document):
                     from_warehouses,
                     self.item_count_map.get(item_code),
                     scanned_item_details=scanned_items_details.get(item_code)
-                ),
+                )
             )
 
             locations = get_item_with_location_and_quantity(item_doc, self.item_location_map)
@@ -115,14 +173,9 @@ class Source(Document):
                 else:
                     updated_locations[key].qty += location.qty
 
-        sorted_locations = sorted(updated_locations.values(), key=lambda loc: loc.get("from_warehouse", ""))
+        sorted_locations = sorted(updated_locations.values(), key=lambda loc: loc.get('from_warehouse', ''))
 
         for location in sorted_locations:
-            if location.scanned_qty > location.requested_qty:
-                e = frappe.exceptions.DoesNotExistError(f"Error: Scanned qty {location.scanned_qty} exceeds requests qty {location.requested_qty} for item {location.item_code}")
-                frappe.response = exception_handler(e)   
-                raise e
-            print('LOCATION: ', location)
             self.append('items', location)
 
         # This is to avoid empty Sources on update after submit.
@@ -139,6 +192,7 @@ class Source(Document):
             )
 
     def aggregate_item_qty(self):
+        """Returns combined requested qty for items with same item_code, uom and to_warehouse"""
         items = self.items
         self.item_count_map = {}
 
@@ -146,11 +200,10 @@ class Source(Document):
         item_map = OrderedDict()
         
         for item in items:
-            if not item.item_code:
-                frappe.throw(f'Row #{item.idx}: Item Code is Mandatory')
-            if not cint(
-                frappe.get_cached_value('Item', item.item_code, 'is_stock_item')
-            ) and not frappe.db.exists('Product Bundle', {'new_item_code': item.item_code, 'disabled': 0}):
+            if item.scanned_qty:
+                continue
+            
+            if not cint(frappe.get_cached_value('Item', item.item_code, 'is_stock_item')):
                 continue
 
             item_code = item.item_code
@@ -163,18 +216,19 @@ class Source(Document):
             item.name = None
 
             if item_map.get(key):
-                item_map[key].requested_qty += item.requested_qty
+                item_map[key].requested_qty += flt(item.requested_qty)
                 
             else:
                 item_map[key] = item
 
-			# Maintain count of each item (useful to limit get query)
+            # Maintain count of each item (useful to limit get query)
             self.item_count_map.setdefault(item_code, 0)
-            self.item_count_map[item_code] += item.requested_qty
+            self.item_count_map[item_code] += flt(item.requested_qty)
 
         return item_map.values()
         
     def get_scanned_items_details(self, items):
+        """Returns combined scanned qty for items from other sources that have not been completed"""
         scanned_items = frappe._dict()
 
         if not items:
@@ -191,14 +245,35 @@ class Source(Document):
             if key not in scanned_items[item_data.item_code]:
                 scanned_items[item_data.item_code][key] = frappe._dict({
                     'scanned_qty': 0,
-                    'to_warehouse': item_data.to_warehouse,
+                    'to_warehouse': key
                 })
 
-            scanned_items[item_data.item_code][key]['scanned_qty'] += item_data.scanned_qty
+            scanned_items[item_data.item_code][key]['scanned_qty'] += flt(item_data.scanned_qty)
 
+        self.update_scanned_item_from_current_source(scanned_items)
+        
         return scanned_items
 
+    def update_scanned_item_from_current_source(self, scanned_items):
+        for row in self.items:
+            if flt(row.scanned_qty) > 0:
+                key = row.from_warehouse
+
+                if row.item_code not in scanned_items:
+                    scanned_items[row.item_code] = {}
+
+                if key not in scanned_items[row.item_code]:
+                    scanned_items[row.item_code][key] = frappe._dict(
+                        {
+                            "scanned_qty": 0,
+                            "to_warehouse": key
+                        }
+                    )
+
+                scanned_items[row.item_code][key]["scanned_qty"] += flt(row.scanned_qty)
+                    
     def get_source_items(self, items):
+        """Returns {item_code, to_warehouse, scanned_qty} of items from other sources that have not been completed"""
         source = frappe.qb.DocType('Source')
         source_item = frappe.qb.DocType('Source Item')
         query = (
@@ -212,13 +287,17 @@ class Source(Document):
             )
             .where(
                 (source_item.item_code.isin([x.item_code for x in items]))
-                & (source_item.scanned_qty > 0)
                 & (source.status != 'Completed')
+                & (source_item.scanned_qty > 0)
+                & (source.docstatus != 1)
+                & (source.docstatus != 2)
             )
         )
 
         if self.name:
             query = query.where(source_item.parent != self.name)
+
+        query = query.for_update()
 
         return query.run(as_dict=True)
     
@@ -237,6 +316,7 @@ def get_available_item_locations(item_code, from_warehouses, requested_qty, scan
     return locations
 
 def get_available_item_locations_for_item(item_code, from_warehouses):
+    """Returns {warehouse, qty} for item based on the given warehouses that have stock"""
     bin = frappe.qb.DocType('Bin')
     query = (
         frappe.qb.from_(bin)
@@ -244,10 +324,8 @@ def get_available_item_locations_for_item(item_code, from_warehouses):
         .where((bin.item_code == item_code) & (bin.actual_qty > 0))
         .orderby(bin.creation)
     )
-    
     query = query.where(bin.warehouse.isin(from_warehouses))
     item_locations = query.run(as_dict=True)
-
     return item_locations
 
 def filter_locations_by_scanned_items(locations, scanned_item_details) -> list[dict]:
@@ -260,9 +338,8 @@ def filter_locations_by_scanned_items(locations, scanned_item_details) -> list[d
 			filterd_locations.append(row)
 			continue
 
-		if scanned_qty > row.qty:
+		if scanned_qty >= row.qty:
 			row.qty = 0
-			scanned_item_details[key]['scanned_qty'] -= row.qty
 
 		else:
 			row.qty -= scanned_qty
@@ -322,19 +399,22 @@ def get_item_with_location_and_quantity(item_doc, item_location_map):
 		item_location = available_locations.pop(0)
 		item_location = frappe._dict(item_location)
 
-		original_qty = item_location.qty
+		original_qty = frappe.db.get_value('Bin', {
+            'warehouse': item_location.warehouse,
+            'item_code': item_doc.item_code
+        }, ['actual_qty'])
 
 		qty = remaining_stock_qty if item_location.qty >= remaining_stock_qty else item_location.qty
-		uom_must_be_whole_number = frappe.get_cached_value("UOM", item_doc.uom, "must_be_whole_number")
+		uom_must_be_whole_number = frappe.get_cached_value('UOM', item_doc.uom, 'must_be_whole_number')
 
 		if uom_must_be_whole_number:
 			qty = floor(qty)
 
 		locations.append(
 			frappe._dict({
-                "qty": qty,
-                "from_warehouse": item_location.warehouse,
-                "available_qty": original_qty
+                'qty': qty,
+                'from_warehouse': item_location.warehouse,
+                'available_qty': original_qty
             })
 		)
 

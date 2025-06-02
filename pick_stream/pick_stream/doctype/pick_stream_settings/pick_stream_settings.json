@@ -5,32 +5,41 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "warehouse_settings_tab",
   "warehouse_settings_section",
   "default_set_from_warehouse",
+  "cups_settings_tab",
   "cups_settings_section",
   "host",
   "column_break_ujis",
   "port",
+  "crate_settings_tab",
   "crate_settings_section",
   "crate_settings",
+  "barcode_settings_tab",
   "barcode_settings_section",
-  "item_types"
+  "item_types",
+  "workflow_settings_tab",
+  "workflow_settings_section",
+  "workflow_settings"
  ],
  "fields": [
   {
    "default": "KG Warehouse - JP",
+   "description": "Primary warehouse location used as the default source for material requests when no specific warehouse is designated.",
    "fieldname": "default_set_from_warehouse",
    "fieldtype": "Link",
    "label": "Default Set From Warehouse",
    "options": "Warehouse"
   },
   {
-   "description": "The host and port on which the CUPS server is hosted.",
+   "description": "Configuration settings for integrating with the Common Unix Printing System (CUPS) server. CUPS handles all printing operations including pick lists, identifier labels, and inventory reports throughout the pick stream process.",
    "fieldname": "cups_settings_section",
    "fieldtype": "Section Break",
    "label": "CUPS Settings"
   },
   {
+   "description": "IP address or hostname of the CUPS print server. This should be the network address where your CUPS server is running, typically in format like '192.168.1.100' or 'print-server.company.com'.",
    "fieldname": "host",
    "fieldtype": "Data",
    "label": "Host"
@@ -40,23 +49,26 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "Network port number for CUPS server communication. Standard CUPS port is 631, but may vary depending on your server configuration and security requirements.",
    "fieldname": "port",
    "fieldtype": "Int",
    "label": "Port"
   },
   {
-   "description": "Types of items which are not able to be transported in crates and their barcode prefixes.",
+   "description": "Configure item classification rules for barcode scanning and inventory management. Define which types of items cannot be transported in standard crates due to size, weight, or special handling requirements, along with their unique barcode prefix identifiers.",
    "fieldname": "barcode_settings_section",
    "fieldtype": "Section Break",
    "label": "Barcode Settings"
   },
   {
+   "description": "Master table defining different categories of inventory items and their handling requirements.",
    "fieldname": "item_types",
    "fieldtype": "Table",
    "label": "Item Types",
    "options": "Pick Stream Item Type"
   },
   {
+   "description": "Configuration parameters for crate management within the pick stream system.",
    "fieldname": "crate_settings_section",
    "fieldtype": "Section Break",
    "label": "Crate Settings"
@@ -68,17 +80,57 @@
    "options": "Crate Settings"
   },
   {
-   "description": "Default warehouse to source from if no source warehouse is set on a Material Request.",
+   "description": "Primary warehouse configuration settings that control default behavior for material sourcing and inventory allocation.",
    "fieldname": "warehouse_settings_section",
    "fieldtype": "Section Break",
    "label": "Warehouse Settings"
+  },
+  {
+   "description": "Main warehouse configuration tab containing all settings related to inventory sourcing, default locations, and material request handling within the pick stream system.",
+   "fieldname": "warehouse_settings_tab",
+   "fieldtype": "Tab Break",
+   "label": "Warehouse Settings"
+  },
+  {
+   "description": "Print server integration tab for configuring CUPS connectivity, printer management, and document formatting settings used throughout the pick stream workflow.",
+   "fieldname": "cups_settings_tab",
+   "fieldtype": "Tab Break",
+   "label": "CUPS Settings"
+  },
+  {
+   "description": "Container management tab for defining crate specifications, capacity planning, and automated handling rules that govern material transportation through the pick stream system.",
+   "fieldname": "crate_settings_tab",
+   "fieldtype": "Tab Break",
+   "label": "Crate Settings"
+  },
+  {
+   "description": "Item identification and classification tab for managing barcode scanning rules, item type definitions, and special handling requirements within the automated pick stream operations.",
+   "fieldname": "barcode_settings_tab",
+   "fieldtype": "Tab Break",
+   "label": "Barcode Settings"
+  },
+  {
+   "fieldname": "workflow_settings_tab",
+   "fieldtype": "Tab Break",
+   "label": "Workflow Settings"
+  },
+  {
+   "fieldname": "workflow_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Workflow Settings"
+  },
+  {
+   "fieldname": "workflow_settings",
+   "fieldtype": "Table",
+   "label": "Workflow Settings",
+   "options": "Pick Stream Workflow"
   }
  ],
  "hide_toolbar": 1,
  "in_create": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-03-25 14:14:29.403336",
+ "modified": "2025-05-30 15:02:37.794259",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Pick Stream Settings",
@@ -95,6 +147,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],

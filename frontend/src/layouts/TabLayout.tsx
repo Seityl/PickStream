@@ -1,7 +1,7 @@
 // import { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router';
 import { FaHome } from "react-icons/fa";
-import { LuNotepadText } from "react-icons/lu";
+import { FaTools } from "react-icons/fa";
 import { BiSolidBellRing } from "react-icons/bi";
 import { IoPersonSharp } from "react-icons/io5";
 const TabLayout = () => {
@@ -15,8 +15,8 @@ const TabLayout = () => {
           <FaHome className='text-3xl' />
         </NavLink>
 
-        <NavLink className='nav-link' to="/pick_stream/logs">
-          <LuNotepadText className='text-3xl'/>
+        <NavLink className='nav-link' to="/pick_stream/tools">
+          <FaTools className='text-3xl'/>
         </NavLink>
 
         <NavLink className='nav-link' to="/pick_stream/notifications">

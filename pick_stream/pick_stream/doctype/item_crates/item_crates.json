@@ -1,0 +1,109 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-05-22 15:17:36.100468",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "crate_code",
+  "column_break_aoyx",
+  "item_code",
+  "column_break_zblu",
+  "qty",
+  "column_break_uoou",
+  "source_item",
+  "section_break_gvvd",
+  "crate_closed",
+  "verified",
+  "received"
+ ],
+ "fields": [
+  {
+   "fieldname": "crate_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Crate Code",
+   "options": "Crate",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_aoyx",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item Code",
+   "options": "Item",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_zblu",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Qty",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_uoou",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Source Item",
+   "options": "Source Item",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "crate_closed",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Crate Closed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_gvvd",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "verified",
+   "fieldtype": "Check",
+   "label": "Verified",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "received",
+   "fieldtype": "Check",
+   "label": "Received",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-06-02 00:29:58.121371",
+ "modified_by": "Administrator",
+ "module": "Pick Stream",
+ "name": "Item Crates",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

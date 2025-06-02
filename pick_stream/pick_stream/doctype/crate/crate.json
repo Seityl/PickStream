@@ -13,11 +13,21 @@
   "column_break_ouyc",
   "status",
   "section_break_zwkq",
-  "stream",
   "from_warehouse",
   "column_break_fdeu",
-  "item_group",
   "to_warehouse",
+  "section_break_dayc",
+  "picking_user",
+  "column_break_wgkc",
+  "verifying_user",
+  "column_break_afag",
+  "transit_user",
+  "column_break_mwzh",
+  "receiving_user",
+  "section_break_uqpt",
+  "item_groups",
+  "section_break_hsns",
+  "streams",
   "section_break_ftoz",
   "items"
  ],
@@ -80,7 +90,8 @@
   },
   {
    "fieldname": "section_break_ftoz",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "hide_border": 1
   },
   {
    "fieldname": "items",
@@ -90,24 +101,79 @@
    "read_only": 1
   },
   {
-   "fieldname": "stream",
-   "fieldtype": "Link",
-   "label": "Stream",
-   "options": "Stream",
+   "fieldname": "section_break_uqpt",
+   "fieldtype": "Section Break",
+   "hide_border": 1
+  },
+  {
+   "fieldname": "section_break_hsns",
+   "fieldtype": "Section Break",
+   "hide_border": 1
+  },
+  {
+   "fieldname": "streams",
+   "fieldtype": "Table",
+   "label": "Streams",
+   "options": "Streams",
    "read_only": 1
   },
   {
-   "fieldname": "item_group",
+   "fieldname": "item_groups",
+   "fieldtype": "Table",
+   "label": "Item Groups",
+   "options": "Crate Item Group",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_dayc",
+   "fieldtype": "Section Break",
+   "hide_border": 1
+  },
+  {
+   "fieldname": "picking_user",
    "fieldtype": "Link",
-   "label": "Item Group",
-   "options": "Item Group",
+   "label": "Picking User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_wgkc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "verifying_user",
+   "fieldtype": "Link",
+   "label": "Verifying User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_afag",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "transit_user",
+   "fieldtype": "Link",
+   "label": "Transit User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_mwzh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "receiving_user",
+   "fieldtype": "Link",
+   "label": "Receiving User",
+   "options": "User",
    "read_only": 1
   }
  ],
  "force_re_route_to_default_view": 1,
  "hide_toolbar": 1,
  "links": [],
- "modified": "2025-03-25 13:56:17.275815",
+ "modified": "2025-05-20 14:05:23.874002",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Crate",

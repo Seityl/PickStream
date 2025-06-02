@@ -34,15 +34,13 @@
   "column_break_ycno",
   "verified",
   "column_break_errt",
-  "crate_closed",
   "references_section",
-  "crate_code",
   "source",
+  "stream",
   "material_request",
   "material_request_item",
-  "stream",
-  "column_break_dciq",
-  "identifier_code"
+  "identifier_code",
+  "column_break_dciq"
  ],
  "fields": [
   {
@@ -116,13 +114,6 @@
    "label": "References"
   },
   {
-   "fieldname": "crate_code",
-   "fieldtype": "Link",
-   "label": "Crate Code",
-   "options": "Crate",
-   "read_only": 1
-  },
-  {
    "fieldname": "material_request",
    "fieldtype": "Link",
    "label": "Material Request",
@@ -148,7 +139,7 @@
    "fieldname": "available_qty",
    "fieldtype": "Float",
    "label": "Available Qty",
-   "precision": "2",
+   "precision": "0",
    "read_only": 1
   },
   {
@@ -167,13 +158,6 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Skipped",
-   "read_only": 1
-  },
-  {
-   "fieldname": "stream",
-   "fieldtype": "Link",
-   "label": "Stream",
-   "options": "Stream",
    "read_only": 1
   },
   {
@@ -270,21 +254,23 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "0",
-   "fieldname": "crate_closed",
-   "fieldtype": "Check",
-   "label": "Crate Closed"
+   "fieldname": "stream",
+   "fieldtype": "Link",
+   "label": "Stream",
+   "options": "Stream",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-03-25 14:07:46.932410",
+ "modified": "2025-05-22 16:35:13.240433",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Source Item",
  "owner": "Administrator",
  "permissions": [],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []

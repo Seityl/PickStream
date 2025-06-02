@@ -10,14 +10,23 @@
   "section_break_uhtf",
   "user",
   "material_request",
+  "column_break_lgzt",
+  "date_created",
   "item_details_section",
   "item_code",
+  "qty",
+  "uom",
   "column_break_zrfz",
-  "item_type",
   "warehouse_details_section",
   "from_warehouse",
   "column_break_lobp",
-  "to_warehouse"
+  "to_warehouse",
+  "print_details_section",
+  "item_type",
+  "dates_printed",
+  "qty_printed",
+  "printed",
+  "column_break_vzqs"
  ],
  "fields": [
   {
@@ -84,13 +93,68 @@
    "label": "Material Request",
    "options": "Material Request",
    "read_only": 1
+  },
+  {
+   "fieldname": "print_details_section",
+   "fieldtype": "Section Break",
+   "label": "Print Details"
+  },
+  {
+   "depends_on": "eval: doc.printed != 0;",
+   "description": "Total Number of labels printed for this item identifier.",
+   "fieldname": "qty_printed",
+   "fieldtype": "Int",
+   "label": "Qty Printed",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Number of print jobs completed for this item identifier.",
+   "fieldname": "printed",
+   "fieldtype": "Int",
+   "label": "Number of Times Printed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_vzqs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_lgzt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "date_created",
+   "fieldtype": "Datetime",
+   "label": "Date Created",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Data",
+   "label": "Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "UOM",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "description": "Dates, times, and users associated with print jobs. ",
+   "fieldname": "dates_printed",
+   "fieldtype": "Long Text",
+   "label": "Dates Printed",
+   "read_only": 1
   }
  ],
  "force_re_route_to_default_view": 1,
  "hide_toolbar": 1,
  "in_create": 1,
  "links": [],
- "modified": "2025-03-25 14:58:26.685928",
+ "modified": "2025-05-02 15:34:31.320968",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Pick Stream Identifier",
@@ -104,6 +168,14 @@
    "read": 1,
    "role": "System Manager",
    "share": 1
+  },
+  {
+   "read": 1,
+   "role": "Stock Manager"
+  },
+  {
+   "read": 1,
+   "role": "Stock User"
   }
  ],
  "sort_field": "modified",

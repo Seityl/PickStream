@@ -1,25 +1,27 @@
 import { useLoaderData } from 'react-router';
 import avatar from '../assets/profile-placeholder.jpg';
-import { useAuth } from '../context/AuthContext';
+// import { useAuth } from '../context/AuthContext';
 import { getUserProfile } from '../../utils/api';
-
+import { getCurrentUser } from '../../utils/auth';
+import { useFrappeAuth } from 'frappe-react-sdk';
 function Profile() {
   const userProfile = useLoaderData();
-  const { user, signOut } = useAuth();
-
+  // const { user, signOut } = useAuth();
+  const {currentUser, logout} = useFrappeAuth();
   async function handleSignOut() {
     try {
-      await signOut();
+      await logout();
+      localStorage.removeItem('user');
     } catch (e) {
       alert('Something went wrong.');
     }
   }
 
   return (
-    <main className='min-h-screen flex flex-col px-4 pt-20'>
+    <main className='min-h-screen flex flex-col px-4 pt-10'>
 
-      <div className='w-[180px] h-[180px] self-center mb-5'>
-        <img className='object-cover h-full w-full rounded-[50%]' src={avatar} alt={user!}/>
+      <div className='w-[160px] h-[160px] self-center mb-5'>
+        <img className='object-cover h-full w-full rounded-[50%]' src={avatar} alt={currentUser!}/>
       </div>
       
       <p className='text-3xl font-semibold self-center mb-4'>Walter Perkins</p>
@@ -56,7 +58,7 @@ function Profile() {
       <button
         className="bg-red-700 text-white tracking-wide uppercase font-bold cursor-pointer rounded-[6px] py-2 shadow-md transition-transform active:scale-95"
         type="button"
-        onClick={signOut}
+        onClick={handleSignOut}
       >
         Sign Out
       </button>
@@ -68,6 +70,6 @@ export default Profile;
 
 
 export async function profileLoader() {
-  const user = localStorage.getItem('user');
+  const user = await getCurrentUser();
   return await getUserProfile(user!);
 }

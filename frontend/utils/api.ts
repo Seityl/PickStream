@@ -1,4 +1,5 @@
 import {frappeClient} from '../utils/client';
+import { getCurrentUser } from './auth';
 
 export async function getMaterialRequests(user: string) {
   try {
@@ -77,6 +78,19 @@ export async function getItemGroupData(user: string, materialRequest: string, it
     return {message: 'something went wrong'};
   }
 }
+
+export async function getUserCrateItemDetails() {
+  const user = await getCurrentUser()
+  const searchParams = {user: user};
+
+  try {
+    const response = await frappeClient.get('pick_stream.api.get_user_active_crate_details', searchParams);
+    return response.message.data;
+  } catch (err) {
+    return {message: 'something went wrong'};
+  }
+}
+     
 
 export async function getNotifications(user: string) {
   try {

@@ -1,9 +1,15 @@
 import {Link} from 'react-router';
 import { FaFileAlt } from "react-icons/fa";
+import { PiBoxArrowDown } from "react-icons/pi";
+import { FaTruck } from "react-icons/fa6";
+import { MdDomainVerification } from "react-icons/md";
 
 export default function Home() {
   const navItems = [
-    { path: '/pick_stream/material-requests', label: 'Material Request', icon: FaFileAlt },
+    { path: '/pick_stream/material-requests', label: 'Picking', icon: FaFileAlt },
+    { path: '/pick_stream/transit', label: 'Transit', icon: FaTruck },
+    { path: '/pick_stream/verification', label: 'Verification', icon: MdDomainVerification },
+    { path: '/pick_stream/receiving', label: 'Receiving', icon: PiBoxArrowDown }
     // { path: '/logs', label: 'Logs', icon: ClipboardList },
     // { path: '/notifications', label: 'Alerts', icon: Bell },
     // { path: '/profile', label: 'Profile', icon: User },

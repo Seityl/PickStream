@@ -1,7 +1,7 @@
 import {useState} from 'react';
 
-export default function ScanAsOtherModal({itemCode, itemBarcode, setItemBarcode, validateBarcode, itemIsValidated, submitScan, closeModal}: any) {
-  const [scannedQuantity, setScannedQuantity] = useState<number | string>(''); 
+export default function ScanAsOtherModal({itemCode, itemDescription, itemBarcode, setItemBarcode, validateBarcode, itemIsValidated, submitScan, closeModal}: any) {
+  const [scannedQuantity, setScannedQuantity] = useState<number>(0); 
   const [closeCrate, setCloseCrate] = useState(false);
 
   return (
@@ -12,7 +12,7 @@ export default function ScanAsOtherModal({itemCode, itemBarcode, setItemBarcode,
       
       <div className="flex flex-col items-center modal-content">
         <p className="mb-8 rounded-[6px] bg-[#e2e2e2] p-[6px]">
-          {itemCode}
+          {itemCode} : {itemDescription}
         </p>
 
         <div className="input-container w-full">
@@ -30,11 +30,7 @@ export default function ScanAsOtherModal({itemCode, itemBarcode, setItemBarcode,
           </label>
         </div>
 
-        <label htmlFor="close_crate">
-          <input type="checkbox" checked={closeCrate} onChange={() => setCloseCrate((prevState) => !prevState)}/>
-        </label>
-
-        <button className="modal-btn" type="submit" onClick={() => submitScan(scannedQuantity, "other", closeCrate)}>
+        <button className="modal-btn" type="submit" onClick={() => submitScan({scannedQuantity: scannedQuantity, itemType: "other", closeCrate: closeCrate})}>
           Submit Scan
         </button>
       

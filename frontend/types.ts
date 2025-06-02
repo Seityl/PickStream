@@ -3,5 +3,5 @@ export type MatReqItem = {
   target_warehouse: string;
   source_warehouse: string;
   status: string;
-  item_group_availability: Record<string, boolean>;
+  item_group_availability: Record<string, boolean>[];
 };

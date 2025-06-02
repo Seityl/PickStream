@@ -10,7 +10,6 @@
  "field_order": [
   "references_section",
   "crate_code",
-  "stream",
   "flow_gate",
   "warehouse_details_section",
   "to_warehouse",
@@ -20,6 +19,8 @@
   "picked_by",
   "column_break_yzpa",
   "verified_by",
+  "section_break_atph",
+  "streams",
   "section_break_rmds",
   "items"
  ],
@@ -41,8 +42,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "To Warehouse",
-   "options": "Warehouse",
-   "reqd": 1
+   "options": "Warehouse"
   },
   {
    "fieldname": "from_warehouse",
@@ -51,18 +51,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "From Warehouse",
-   "options": "Warehouse",
-   "reqd": 1
-  },
-  {
-   "fieldname": "stream",
-   "fieldtype": "Link",
-   "in_filter": 1,
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Stream",
-   "options": "Stream",
-   "reqd": 1
+   "options": "Warehouse"
   },
   {
    "fieldname": "items",
@@ -104,8 +93,7 @@
    "fieldname": "picked_by",
    "fieldtype": "Link",
    "label": "Picked By",
-   "options": "User",
-   "reqd": 1
+   "options": "User"
   },
   {
    "fieldname": "column_break_yzpa",
@@ -116,13 +104,23 @@
    "fieldtype": "Link",
    "label": "Verified By",
    "options": "User"
+  },
+  {
+   "fieldname": "section_break_atph",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "streams",
+   "fieldtype": "Table",
+   "label": "Streams",
+   "options": "Streams"
   }
  ],
  "force_re_route_to_default_view": 1,
  "hide_toolbar": 1,
  "in_create": 1,
  "links": [],
- "modified": "2025-03-24 15:01:29.716700",
+ "modified": "2025-05-16 15:09:59.037549",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Crate Log",
@@ -157,7 +155,7 @@
    "share": 1
   }
  ],
- "search_fields": "crate_code, stream",
+ "search_fields": "crate_code",
  "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",

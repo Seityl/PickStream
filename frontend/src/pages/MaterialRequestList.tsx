@@ -2,6 +2,7 @@ import { useLoaderData, Link } from 'react-router';
 import { FaArrowLeft } from "react-icons/fa";
 import MaterialRequestItem from '../components/MaterialRequestItem';
 import {getMaterialRequests} from '../../utils/api';
+import {getCurrentUser} from '../../utils/auth';
 import { MatReqItem } from '../../types';
 
 function MaterialRequestList() {
@@ -16,7 +17,7 @@ function MaterialRequestList() {
     
             <p className='mx-auto text-xl font-semibold'>Material Requests</p>
       </header>
-      <div className='matreq-list-container'>
+      <div className='matreq-list-container mb-15'>
         {materialRequests && materialRequests.map((materialRequest: MatReqItem) => {
           return <MaterialRequestItem {...materialRequest}/>
         })}
@@ -35,7 +36,10 @@ export default MaterialRequestList;
 
 
 export async function materialRequestLoader() {
-  const user = localStorage.getItem('user');
+  const user = await getCurrentUser();
   console.log('material request loader - ', user);
-  return await getMaterialRequests(user!);
+  const materialRequests = await getMaterialRequests(user!);
+  console.log('material requests list -',materialRequests);
+  return materialRequests;
+  // return await getMaterialRequests(user!);
 }

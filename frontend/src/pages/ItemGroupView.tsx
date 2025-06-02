@@ -3,7 +3,7 @@ import {useParams, useNavigate, useLoaderData, LoaderFunctionArgs, redirect} fro
 import { FaArrowLeft } from "react-icons/fa";
 import {frappeClient} from '../../utils/client';
 import {getItemGroupData} from '../../utils/api';
-
+import { getCurrentUser } from '../../utils/auth';
 import Crate from '../components/Crate';
 import { FaPlus } from "react-icons/fa";
 
@@ -16,7 +16,6 @@ type crate = {
 function ItemGroupView() {
   const navigate = useNavigate();
   const viewData = useLoaderData();
-  const [isHidden, setIsHidden] = useState(true);
   const [crateCode, setCrateCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -27,16 +26,10 @@ function ItemGroupView() {
 
   useEffect(() => {
     if (crateCode && isValid) {
-      redirect(`/pick_stream/picking?mr_name=${materialRequest}&item_group=${itemGroup}&crate_code=${crateCode}`);
+      navigate(`/pick_stream/picking?mr_name=${materialRequest}&item_group=${itemGroup}&crate_code=${crateCode}`);
     }
 
   }, [isValid])
-
-  function toggleModal() {
-    setIsHidden((prevState) => {
-      return !prevState;
-    });
-  }
 
   async function validateCrate() {
     const params = {
@@ -57,53 +50,26 @@ function ItemGroupView() {
         <p className='mx-auto text-xl font-semibold'>{itemGroup}</p>
       </header>
       <div className='px-4 mt-10'>
-        {!isHidden ? 
-          <>
-            <div className="modal-backdrop" onClick={toggleModal}></div>
+        <div className="flex flex-col items-center ">
+            <p className='text-2xl mb-3'>Enter Crate Code</p>
 
-            <div className="modal">
-              <div className="flex flex-col items-center modal-content">
-                  <p className=''>Enter Crate Code</p>
+            <div className="input-container w-full">
+                <input
+                  className="input-field mb-0 w-full"
+                  name="crate_code"
+                  id="crate_code"
+                  type="text"
+                  placeholder="Crate Code"
+                  value={crateCode}
+                  onChange={(e) => {setCrateCode(e.target.value);}}
+                />
+            </div>
 
-                  <div className="input-container w-full">
-                      <input
-                        className="input-field mb-0 w-full"
-                        name="crate_code"
-                        id="crate_code"
-                        type="text"
-                        placeholder="Crate Code"
-                        value={crateCode}
-                        onChange={(e) => {setCrateCode(e.target.value);}}
-                      />
-                  </div>
-
-                  <button className="modal-btn" type="submit" onClick={() => validateCrate()}>
-                  {error ? error : !isLoading ? 'Select Crate' : 'Checking Availability...'}
-                  </button>
-                </div>
-              </div>
-          </>
-          :  
-          ''
-        }
-
-        <p className='text-2xl font-bold mb-10'>Crates</p>
-        <button className='create-crate-btn' onClick={toggleModal}><FaPlus /></button>
-        <div className='mt-10'>
-          <ul className='flex flex-col gap-y-3'>
-            {viewData.crates.length > 0 && viewData.crates.map((crate: crate, index: number) => {
-              return <li key={index}><Crate {...crate} /></li>
-            })}
-            {viewData.crates.length === 0 && 
-              (
-                <div>
-                  <p className='text-center'>This Item Group Has No Crates.</p>
-                </div>
-              )
-            }
-          </ul>
+            <button className="modal-btn" type="submit" onClick={() => validateCrate()}>
+            {error ? error : !isLoading ? 'Select Crate' : 'Checking Availability...'}
+            </button>
+          </div>
         </div>
-      </div>
     </main>
   );
 }
@@ -111,7 +77,7 @@ function ItemGroupView() {
 export default ItemGroupView;
 
 export async function itemGroupLoader({params}: LoaderFunctionArgs){
-  const user = localStorage.getItem('user');
+  const user = await getCurrentUser();
   const {material_request, item_group} = params;
 
   try {

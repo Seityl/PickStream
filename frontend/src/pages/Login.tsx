@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { motion } from 'motion/react';
-import { useAuth } from '../context/AuthContext';
 import logo from '../assets/placeholder-png.png';
-
+import { useFrappeAuth } from 'frappe-react-sdk';
+import { toast } from 'react-toastify';
 
 const imageVariants = {
   hidden: {y: -50, opacity: 0},
@@ -37,39 +37,53 @@ const buttonVariants = {
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-
-  const { isAuthenticated, signIn, isLoading } = useAuth();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const {currentUser, login, error} = useFrappeAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  
+  // if (currentUser) {
+  //   navigate('/pick_stream', { replace: true });
+  // }
+ 
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      navigate(/*location.state?.from?.pathname ||*/ '/pick_stream', { replace: true });
-    }
-  }, [isAuthenticated, navigate, location]);
+  async function handleSubmit(e?: React.FormEvent) {
+    e?.preventDefault();
+    setIsSubmitting(true);
 
-  async function handleSubmit(e: React.FormEvent) {
     try {
-      e.preventDefault();
-
       if (!email) {
-        setError('Email field cannot be left blank.');
+        setErrorMessage('Email field cannot be left blank.');
       }
 
       if (!password) {
-        setError('Password field cannot be left blank.');
+        setErrorMessage('Password field cannot be left blank.');
       }
 
       if (!email && !password) {
-        setError('Fields cannot be left blank.');
+        setErrorMessage('Fields cannot be left blank.');
       }
 
-      const result = await signIn(email, password);
-    } catch (e) {
-      setError('Invalid login. Please try again.');
+      const result = await login({username: email, password: String.raw`${password}`});
+
+      navigate('/pick_stream', { replace: true });
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : "Invalid Login");
+      toast(err instanceof Error ? err.message : "Invalid Login", {
+        position: "bottom-right",
+        autoClose: 5000,
+        hideProgressBar: false,
+        closeOnClick: true, 
+        rtl: false,
+        theme: "dark",
+        //transition={Bounce}
+      })
+    } finally {
+      setIsSubmitting(false);
     }
   }
+
   return (
     <main className="px-4 pt-20">
       <motion.img variants={imageVariants} className="block object-contain" src={logo} alt="Logo" />
@@ -102,7 +116,7 @@ export default function Login() {
           className="cursor-pointer bg-[#171717] text-white text-lg font-bold py-4 rounded-[6px] shadow-md transition-transform active:scale-95"
           type="submit"
         >
-          {error ? error : !isLoading ? 'Login' : 'Verifying...'}
+          {!isSubmitting ? 'Login' : 'Verifying...'}
         </motion.button>
       </motion.div>
       </form>
