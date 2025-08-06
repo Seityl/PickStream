@@ -1,23 +1,13 @@
-import {useFrappeGetCall, useFrappeAuth,} from 'frappe-react-sdk';
-import {Link} from 'react-router';
+import {useLoaderData, Link} from 'react-router';
 import { FaArrowLeft } from "react-icons/fa";
+import { getCurrentUser } from '../../utils/auth';
 import ItemIdentifierNode from '../components/ItemIdentifierNode';
+import {getItemIdentifierList} from '../../utils/api';
 
-export default function IdentifierLookup() {
-  const {currentUser} = useFrappeAuth();
+function IdentifierLookup() {
+  const itemIdentifiers = useLoaderData();
+  console.log(itemIdentifiers);
 
-  const { data: itemIdentifierList, mutate: refreshItemIdentifierList } = useFrappeGetCall<{ message: any }>(
-    "pick_stream.api.get_item_identifier_list",
-    {
-      user: currentUser
-    },
-    undefined,
-    {
-      revalidateOnFocus: true
-    },
-    "GET"
-  );
-  const itemIdentifiers = itemIdentifierList?.message.data;
   return (
     <main>
        <header className='flex flex-row items-center px-4 py-6 bg-[#171717] text-white'>
@@ -38,4 +28,12 @@ export default function IdentifierLookup() {
       </div>
     </main>
   )
+}
+
+export default IdentifierLookup;
+
+export async function IdentifierLookupLoader(/*{params}: LoaderFunctionArgs*/) {
+  const user = await getCurrentUser();
+  const crateTransitDetails = await getItemIdentifierList(user);
+  return crateTransitDetails;
 }

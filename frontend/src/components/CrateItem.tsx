@@ -6,13 +6,13 @@ import { AiFillProfile } from "react-icons/ai";
 
 export default function CratetItem(props: any) {
 
-  const {crateCode} = props;
+  const {crate_code} = props;
 
   
 
   return (
      <div className='crate-item-container'>
-      <p>{crateCode}</p>
+      <p>{crate_code}</p>
     </div>
   )
 }

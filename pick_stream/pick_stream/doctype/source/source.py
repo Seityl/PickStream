@@ -1,7 +1,6 @@
 # Copyright (c) 2025, Jollys Pharmacy Limited and contributors
 # For license information, please see license.txt
-
-from collections import OrderedDict
+import re
 
 import frappe
 from frappe import _
@@ -10,7 +9,6 @@ from frappe.utils.nestedset import get_descendants_of
 from frappe.utils import cint, flt, floor, get_link_to_form
 
 import pick_stream
-from pick_stream.core import get_pick_stream_settings, create_stream, update_stream
 
 class Source(Document):
     def before_save(self):
@@ -22,33 +20,19 @@ class Source(Document):
         self.update_streams()
 
     def on_update(self):
-        if self.is_completed():
+        if self.is_completed() and self.status != 'Completed':
             self.db_set('status', 'Completed')
-            self.update_linked_streams_status()
             
     def is_completed(self):
         return all(item.scanned or item.skipped for item in self.items)
 
-    def update_linked_streams_status(self):
-        """Update all linked streams to 'Waiting' status after completion of source"""
-        streams = frappe.db.get_list('Stream',
-            filters={'source': self.name},
-            fields=['name']
-        )
-        for stream in streams:
-            stream = frappe.get_doc('Stream', stream.name)
-            if stream.status != 'Completed':
-                stream.db_set('status', 'Waiting')
-            
-        frappe.db.commit()
-
     def update_streams(self):
-        crates_status = self.get_crates_status()
-        
+        crates_status, crate_users = self.get_crates_status()
+
         if not crates_status:
             return
 
-        for crate_code, is_closed in crates_status.items():
+        for crate_code, status in crates_status.items():
             stream_name = frappe.db.get_value(
                 'Stream', 
                 {
@@ -57,25 +41,178 @@ class Source(Document):
                 }, 
                 'name'
             )
-            status = 'Waiting' if is_closed else None
+            
+            users = crate_users.get(crate_code, {})
+
             if not stream_name:
-                stream_name = create_stream(self, crate_code)
-                update_stream(self, stream_name, status)
+                stream_name = pick_stream.core.create_stream(self, crate_code)
+                pick_stream.core.update_stream(self, stream_name, status, users)
+
             else:
-                update_stream(self, stream_name, status)
+                pick_stream.core.update_stream(self, stream_name, status, users)
 
     def get_crates_status(self):
-        """Returns {crate_code: True only if all items for crate are closed}"""
         crates_status = frappe._dict()
-        
+        crate_items = frappe._dict()
+        crate_users = frappe._dict()
+
         for row in self.item_crates:
-            if row.crate_code not in crates_status:
-                crates_status[row.crate_code] = True
+            if row.crate_code == None:
+                continue
             
-            if not row.crate_closed:
-                crates_status[row.crate_code] = False
+            if row.crate_code not in crate_items:
+                crate_items[row.crate_code] = []
+                crate_users[row.crate_code] = frappe._dict({
+                    'picking_user': '',
+                    'verifying_user': '',
+                    'transit_user': '',
+                    'receiving_user': ''
+                })
+
+            crate_items[row.crate_code].append(row)
+        frappe.log_error('item crates', frappe.as_json(crate_items, indent=2))
+        partially_fulfilled_crates = []
+        workflow = pick_stream.utils.get_workflow_details(self.to_warehouse)
+
+        for crate_code, items in crate_items.items():
+            total_items = len(items)
+            
+            closed_items = sum(1 for item in items if item.crate_closed)
+            verified_items = sum(1 for item in items if item.verified)
+            transited_items = sum(1 for item in items if item.transited)
+            received_items = sum(1 for item in items if item.received)
+
+            current_user = frappe.session.user
+            users = crate_users[crate_code]
         
-        return crates_status
+            if closed_items == total_items and not users['picking_user']:
+                users['picking_user'] = current_user
+            elif verified_items == total_items and not users['verifying_user']:
+                users['verifying_user'] = current_user
+            elif transited_items == total_items and not users['transit_user']:
+                users['transit_user'] = current_user
+            elif received_items == total_items and not users['receiving_user']:
+                users['receiving_user'] = current_user
+
+            if (received_items == total_items and 
+                (not workflow.verification_after_receiving or verified_items == total_items)):
+                current_status = 'Completed'  # Workflow complete - all items verified AND received
+
+            elif (received_items == total_items and 
+                workflow.verification_after_receiving):
+                current_status = 'Received'  # Received, awaiting verification
+
+            elif transited_items == total_items:
+                current_status = 'In Transit' # In Transit
+
+            elif (verified_items == total_items and 
+                workflow.receiving_after_verification):
+                current_status = 'Verified'  # Verified, awaiting receiving
+
+            elif (verified_items == total_items and 
+                workflow.transit_after_verification):
+                current_status = 'Verified'  # Verified, awaiting transit
+
+            elif closed_items == total_items:
+                current_status = 'Waiting'  # Picked, waiting for verification or transit
+
+            else:
+                current_status = 'Picking' # Still picking
+
+            is_partially_fulfilled = (
+                (0 < closed_items < total_items) or
+                (0 < verified_items < total_items) or
+                (0 < transited_items < total_items) or
+                (0 < received_items < total_items)
+            )
+
+            if not is_partially_fulfilled:
+                crates_status[crate_code] = current_status
+
+            else:
+                # This indicates system a system failure of some sort.
+                # Reset items to previous stage to ensure forward correctness.
+                partially_fulfilled_crates.append(crate_code)
+                try:
+                    stream_doc = frappe.get_doc('Stream', {
+                        'crate_code': crate_code,
+                        'source': self.name
+                    })
+                    previous_status = stream_doc.previous_status if stream_doc.previous_status else 'Picking'
+                    
+                except frappe.DoesNotExistError:
+                    # If no stream doc exists, default to 'Picking' as the previous status
+                    previous_status = 'Picking'
+            
+                for item in items:
+                    reset_values = {
+                        'crate_closed': 0,
+                        'verified': 0,
+                        'transited': 0,
+                        'received': 0
+                    }
+                    
+                    if previous_status == 'Waiting':
+                        reset_values['crate_closed'] = 1
+
+                    elif previous_status == 'Verified':
+                        reset_values['crate_closed'] = 1
+                        reset_values['verified'] = 1
+                        
+                    elif previous_status == 'In Transit':
+                        reset_values['crate_closed'] = 1
+                        reset_values['transited'] = 1
+
+                        if workflow.transit_after_verification:
+                            reset_values['verified'] = 1
+                            
+                    elif previous_status == 'Received':
+                        reset_values['crate_closed'] = 1
+                        reset_values['received'] = 1
+
+                        if workflow.receiving_after_verification:
+                            reset_values['verified'] = 1
+                            
+                        if workflow.transit_required:
+                            reset_values['transited'] = 1
+                        
+                    # For 'Picking' stage, all remain 0
+
+                    frappe.db.set_value('Item Crates', item.name, reset_values)
+                    frappe.db.commit()
+
+                crates_status[crate_code] = previous_status
+
+        if partially_fulfilled_crates:
+            crate_list = ', '.join(partially_fulfilled_crates)
+            raise pick_stream.exceptions.SystemError(
+                f'System Error: Crate(s) {crate_list} were partially fulfilled. Item statuses have been reset to previous value ensure data integrity.'
+            )
+
+        saved_crate_codes = set(frappe.get_all('Item Crates',
+            filters={'parent': self.name, 'crate_code': ('is', 'set')},
+            pluck='crate_code'
+        ))
+        
+        # Only process picking crates that are saved in the database to avoid double closing
+        picking_crates = [
+            (crate_code, status) 
+            for crate_code, status in crates_status.items() 
+            if status == 'Picking' and crate_code in saved_crate_codes
+        ]
+        
+        if len(picking_crates) > 1:
+            def get_min_idx_for_crate(crate_code):
+                return min(item.idx for item in self.item_crates if item.crate_code == crate_code)
+            
+            picking_crates.sort(key=lambda x: get_min_idx_for_crate(x[0]))
+            
+            crates_to_close = picking_crates[:-1]
+            for crate_code, _ in crates_to_close:
+                pick_stream.core.close_crate(crate_code, commit=False)
+                crates_status[crate_code] = 'Waiting' # Update the status after closing
+
+        return crates_status, crate_users
     
     def validate_stock_qty(self):
         for row in self.items:
@@ -84,33 +221,33 @@ class Source(Document):
 
             bin_qty = frappe.db.get_value('Bin', {'item_code': row.item_code, 'warehouse': row.from_warehouse}, 'actual_qty')
 
+            if row.scanned_qty > flt(bin_qty):
+                raise pick_stream.exceptions.ValidationError(f'Scanned qty {row.scanned_qty} exceeds available qty {bin_qty} for item {row.item_code}')
+
             if row.available_qty != flt(bin_qty):
                 row.available_qty = flt(bin_qty)
-
-            if row.available_qty > flt(bin_qty):
-                raise pick_stream.exceptions.ValidationError(f'Scanned qty {row.scanned_qty} exceeds available qty {bin_qty} for item {row.item_code}')
 
     def validate_scanned_qty(self):
         item_qty_map = {}
         
         for crate in self.item_crates:
-            if crate.item_code in item_qty_map:
-                item_qty_map[crate.item_code] += crate.qty
+            if crate.source_item in item_qty_map:
+                item_qty_map[crate.source_item] += crate.qty
             else:
-                item_qty_map[crate.item_code] = crate.qty
+                item_qty_map[crate.source_item] = crate.qty
         
         for row in self.items:
-            row.scanned_qty = item_qty_map.get(row.item_code, 0)
+            row.scanned_qty = item_qty_map.get(row.name, 0)
             
-            if not row.scanned_qty:
+            if row.scanned_qty == None:
                 continue
                 
-            if row.scanned_qty <= 0:
+            if row.scanned and row.scanned_qty <= 0:
                 raise pick_stream.exceptions.ValidationError(
                     f'Scanned qty {row.scanned_qty} cannot be less than or equal to 0 for item {row.item_code}'
                 )
                 
-            if row.scanned_qty > row.requested_qty:
+            if row.scanned and row.scanned_qty > row.requested_qty:
                 raise pick_stream.exceptions.ValidationError(
                     f'Scanned qty {row.scanned_qty} exceeds requested qty {row.requested_qty} for item {row.item_code}'
                 )          
@@ -119,20 +256,17 @@ class Source(Document):
         items = self.aggregate_item_qty()
         scanned_items_details = self.get_scanned_items_details(items)
 
-        settings = get_pick_stream_settings()
+        settings = pick_stream.utils.get_settings()
         # Set default source warehouse if none is set on Material Request
         default_set_from_warehouse = settings.default_set_from_warehouse
         set_from_warehouse = frappe.db.get_value('Material Request', self.material_request, 'set_from_warehouse')
         from_warehouses = [set_from_warehouse] if set_from_warehouse else [default_set_from_warehouse]
         from_warehouses.extend(get_descendants_of('Warehouse', from_warehouses))
 
-        # Create replica before resetting, to handle empty table on update after submit.
-        locations_replica = self.get('items')
-
         # Reset Items
         reset_rows = []
         for row in self.get('items'):
-            if not row.scanned_qty:
+            if not row.scanned_qty and not row.skipped:
                 reset_rows.append(row)
 
         for row in reset_rows:
@@ -163,7 +297,7 @@ class Source(Document):
                 location.update(row)
                 key = (
                     location.item_code,
-                    location.warehouse,
+                    location.from_warehouse,
                     location.uom,
                     location.material_request_item
                 )
@@ -173,62 +307,41 @@ class Source(Document):
                 else:
                     updated_locations[key].qty += location.qty
 
-        sorted_locations = sorted(updated_locations.values(), key=lambda loc: loc.get('from_warehouse', ''))
+        sorted_locations = sorted(updated_locations.values(), key=lambda loc: natural_sort_key(loc.get('from_warehouse', '')))
 
         for location in sorted_locations:
             self.append('items', location)
 
-        # This is to avoid empty Sources on update after submit.
-        if not self.get('items') and self.docstatus == 1:
-            for location in locations_replica:
-                location.requested_qty = 0
-                location.scanned_qty = 0
-                self.append('items', location)
-            frappe.log_error(
-                message=_(
-                    'Please Restock Items and Update the Pick List to continue. To discontinue, cancel the Pick List.'
-                ),
-                title=_('[Pick Stream] Out of Stock')
-            )
-
     def aggregate_item_qty(self):
-        """Returns combined requested qty for items with same item_code, uom and to_warehouse"""
         items = self.items
         self.item_count_map = {}
 
-        # Aggregate qty for same item
-        item_map = OrderedDict()
+        item_list = []
         
         for item in items:
-            if item.scanned_qty:
+            # Skip items that are already processed (scanned or skipped)
+            if item.scanned_qty or item.skipped:
                 continue
             
             if not cint(frappe.get_cached_value('Item', item.item_code, 'is_stock_item')):
                 continue
 
             item_code = item.item_code
-            material_request = item.material_request
-            material_request_item = item.material_request_item
 
-            key = (item_code, item.uom, item.to_warehouse, material_request, material_request_item)
-
+            # Reset idx and name for processing
             item.idx = None
             item.name = None
 
-            if item_map.get(key):
-                item_map[key].requested_qty += flt(item.requested_qty)
-                
-            else:
-                item_map[key] = item
+            item_list.append(item)
 
-            # Maintain count of each item (useful to limit get query)
+            # Maintain count of each item - sum up all unprocessed items for this item_code
             self.item_count_map.setdefault(item_code, 0)
             self.item_count_map[item_code] += flt(item.requested_qty)
 
-        return item_map.values()
+        return item_list
         
     def get_scanned_items_details(self, items):
-        """Returns combined scanned qty for items from other sources that have not been completed"""
+        """Returns combined scanned qty for items from sources that have not been completed"""
         scanned_items = frappe._dict()
 
         if not items:
@@ -256,7 +369,7 @@ class Source(Document):
 
     def update_scanned_item_from_current_source(self, scanned_items):
         for row in self.items:
-            if flt(row.scanned_qty) > 0:
+            if flt(row.scanned_qty) > 0 or row.skipped:
                 key = row.from_warehouse
 
                 if row.item_code not in scanned_items:
@@ -270,7 +383,19 @@ class Source(Document):
                         }
                     )
 
-                scanned_items[row.item_code][key]["scanned_qty"] += flt(row.scanned_qty)
+                if flt(row.scanned_qty) > 0:
+                    scanned_items[row.item_code][key]["scanned_qty"] += flt(row.scanned_qty)
+                
+                # For skipped items, mark the entire available quantity as "scanned" 
+                # to prevent new items from being created for this warehouse
+                elif row.skipped:
+                    # Get the actual available quantity in this warehouse
+                    bin_qty = frappe.db.get_value('Bin', {
+                        'item_code': row.item_code, 
+                        'warehouse': row.from_warehouse
+                    }, 'actual_qty') or 0
+                    
+                    scanned_items[row.item_code][key]["scanned_qty"] += flt(bin_qty)
                     
     def get_source_items(self, items):
         """Returns {item_code, to_warehouse, scanned_qty} of items from other sources that have not been completed"""
@@ -289,6 +414,7 @@ class Source(Document):
                 (source_item.item_code.isin([x.item_code for x in items]))
                 & (source.status != 'Completed')
                 & (source_item.scanned_qty > 0)
+                & (source.name != self.name)
                 & (source.docstatus != 1)
                 & (source.docstatus != 2)
             )
@@ -312,7 +438,6 @@ def get_available_item_locations(item_code, from_warehouses, requested_qty, scan
         locations = get_locations_based_on_requested_qty(locations, requested_qty)
 
     validate_scanned_items(item_code, requested_qty, locations, scanned_item_details)
-
     return locations
 
 def get_available_item_locations_for_item(item_code, from_warehouses):
@@ -351,18 +476,18 @@ def filter_locations_by_scanned_items(locations, scanned_item_details) -> list[d
 	return filterd_locations
 
 def get_locations_based_on_requested_qty(locations, requested_qty):
-	filtered_locations = []
+    filtered_locations = []
 
-	for location in locations:
-		if location.qty >= requested_qty:
-			location.qty = requested_qty
-			filtered_locations.append(location)
-			break
+    for location in locations:
+        if location.qty >= requested_qty:
+            location.qty = requested_qty
+            filtered_locations.append(location)
+            break
 
-		requested_qty -= location.qty
-		filtered_locations.append(location)
+        requested_qty -= location.qty
+        filtered_locations.append(location)
 
-	return filtered_locations
+    return filtered_locations
 
 def validate_scanned_items(item_code, requested_qty, locations, scanned_item_details=None):
 	for location in list(locations):
@@ -390,42 +515,49 @@ def validate_scanned_items(item_code, requested_qty, locations, scanned_item_det
 			)
                
 def get_item_with_location_and_quantity(item_doc, item_location_map):
-	available_locations = item_location_map.get(item_doc.item_code)
-	locations = []
+    available_locations = item_location_map.get(item_doc.item_code)
+    locations = []
 
-	remaining_stock_qty = item_doc.requested_qty
+    remaining_stock_qty = item_doc.requested_qty
 
-	while remaining_stock_qty > 0 and available_locations:
-		item_location = available_locations.pop(0)
-		item_location = frappe._dict(item_location)
+    while remaining_stock_qty > 0 and available_locations:
+        item_location = available_locations.pop(0)
+        item_location = frappe._dict(item_location)
 
-		original_qty = frappe.db.get_value('Bin', {
+        original_qty = frappe.db.get_value('Bin', {
             'warehouse': item_location.warehouse,
             'item_code': item_doc.item_code
         }, ['actual_qty'])
 
-		qty = remaining_stock_qty if item_location.qty >= remaining_stock_qty else item_location.qty
-		uom_must_be_whole_number = frappe.get_cached_value('UOM', item_doc.uom, 'must_be_whole_number')
+        qty = remaining_stock_qty if item_location.qty >= remaining_stock_qty else item_location.qty
+        uom_must_be_whole_number = frappe.get_cached_value('UOM', item_doc.uom, 'must_be_whole_number')
 
-		if uom_must_be_whole_number:
-			qty = floor(qty)
+        if uom_must_be_whole_number:
+            qty = floor(qty)
 
-		locations.append(
-			frappe._dict({
+        locations.append(
+            frappe._dict({
                 'qty': qty,
                 'from_warehouse': item_location.warehouse,
                 'available_qty': original_qty
             })
-		)
+        )
 
-		remaining_stock_qty -= qty
-		qty_diff = item_location.qty - qty
+        remaining_stock_qty -= qty
+        qty_diff = item_location.qty - qty
 
-		# if extra quantity is available push current warehouse to available locations
-		if qty_diff > 0:
-			item_location.qty = qty_diff
-			available_locations = [item_location, *available_locations]
+        # if extra quantity is available push current warehouse to available locations
+        if qty_diff > 0:
+            item_location.qty = qty_diff
+            available_locations = [item_location, *available_locations]
 
-	# update available locations for the item
-	item_location_map[item_doc.item_code] = available_locations
-	return locations
+    # update available locations for the item
+    item_location_map[item_doc.item_code] = available_locations
+    return locations
+
+def natural_sort_key(warehouse_name):
+    # Split the string into text and number parts
+    def convert(text):
+        return int(text) if text.isdigit() else text.lower()
+    
+    return [convert(c) for c in re.split(r'(\d+)', warehouse_name)]

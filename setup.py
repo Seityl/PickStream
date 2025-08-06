@@ -10,7 +10,7 @@ setup(
 	version = version,
 	description = 'A robust, efficient, and accurate inventory management module that simplifies the replenishment process, reduces errors, and enhances operational efficiency across stores.',
 	author = 'Jollys Pharmacy Limited',
-	author_email = 'cdgrant@jollysonline.com',
+	author_email = 'jeriel@jollysonline.com',
 	packages = find_packages(),
 	zip_safe = False,
 	include_package_data = True,

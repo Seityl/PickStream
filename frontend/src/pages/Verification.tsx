@@ -1,49 +1,84 @@
-import { useLoaderData, Link } from 'react-router';
+import React from 'react';
+import { Link, useLoaderData } from 'react-router';
 import { FaArrowLeft } from "react-icons/fa";
-import CrateItem from '../components/CrateItem';
-// import {getVerificationCrateList} from '../../utils/api';
-import {getCurrentUser} from '../../utils/auth';
+import { getVerificationListView } from '../../utils/api';
+import { getCurrentUser } from '../../utils/auth';
+import ListItem from '../components/ListItem';
+
+type Identifier = {
+  identifier_code: string;
+  source_warehouse: string;
+  target_warehouse: string
+}
+
+type Crate = {
+  crate_code: string;
+  source_warehouse: string;
+  target_warehouse: string
+}
+
+type VerificationListType = {
+  crate_details: Crate[];
+  identifier_details: Identifier[];
+};
+
+export async function verificationLoader() {
+  const user = await getCurrentUser();
+  if (!user) {
+    throw new Response("Not Logged In", { status: 401 });
+  }
+  const verificationList = await getVerificationListView(user);
+  return { verificationList };
+}
 
 function VerificationList() {
-  // const crateList = useLoaderData();
-  // console.log(crateList);
+  const { verificationList } = useLoaderData() as { verificationList: VerificationListType };
+
+  const groupedItems = [...verificationList.crate_details, ...verificationList.identifier_details].reduce((acc, item) => {
+    const key = `${item.source_warehouse} -> ${item.target_warehouse}`;
+    if (!acc[key]) {
+      acc[key] = [];
+    }
+    acc[key].push(item);
+    return acc;
+  }, {} as Record<string, (Crate | Identifier)[]>);
+
 
   return (
     <main className='min-h-screen'>
       <header className='flex flex-row items-center px-4 py-6 bg-[#171717] text-white'>
-            <Link to={`/pick_stream/`}>
-              <FaArrowLeft size={24}/>
-            </Link>
-    
-            <p className='mx-auto text-xl font-semibold'>Awaiting Verification</p>
+        <Link to={`/pick_stream/`}>
+          <FaArrowLeft size={24}/>
+        </Link>
+        <p className='mx-auto text-xl font-semibold'>Awaiting Verification</p>
       </header>
       <div className='matreq-list-container mb-15'>
-        {/* {crateList && crateList.map((crate: any) => {
-          return <CrateItem {...crate}/>
-        })} */}
-        <CrateItem crate_code="CRATE-001" from_warehouse="Warehouse A" to_warehouse="Warehouse B" status="Pending Verification" />
-        <CrateItem crate_code="CRATE-002" from_warehouse="Warehouse C" to_warehouse="Warehouse D" status="Pending Verification" />
-        <CrateItem crate_code="CRATE-003" from_warehouse="Warehouse E" to_warehouse="Warehouse F" status="Pending Verification" /> 
-        <CrateItem crate_code="CRATE-004" from_warehouse="Warehouse G" to_warehouse="Warehouse H" status="Pending Verification" />
+        {Object.keys(groupedItems).length === 0 ? (
+          <p className="p-4 text-center">No items to verify.</p>
+        ) : (
+          Object.entries(groupedItems).map(([group, items]) => (
+            <div key={group}>
+              <h2 className="text-md font-bold p-4">{group}</h2>
+              <div className="flex flex-col gap-y-2 px-4">
+                {items.map((item) => {
+                  const isCrate = 'crate_code' in item;
+                  const code = isCrate ? item.crate_code : item.identifier_code;
+                  const type = isCrate ? 'crate' : 'item';
+                  const linkTo = `/pick_stream/verification/${type}/${code}`;
+
+                  return (
+                    <Link to={linkTo} key={code}>
+                      <ListItem code={code} type={type} />
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        )}
       </div>
-      
-      {/* {crateList.length === 0 &&  (<div className=" flex h-full justify-center items-center">
-        <div className='w-100 text-center'>
-          <p className='text-center'>You have no Crates assigned for Verification.</p>
-        </div>
-      </div>)} */}
     </main>
   );
 }
 
 export default VerificationList;
-
-
-// export async function VerificationLoader() {
-//   const user = await getCurrentUser();
-//   console.log('verification loader - ', user);
-//   const verificationCrateList = await getVerificationCrateList(user!);
-//   console.log('verification crate list -', verificationCrateList);
-//   return verificationCrateList
-//   // return await getMaterialRequests(user!);
-// }

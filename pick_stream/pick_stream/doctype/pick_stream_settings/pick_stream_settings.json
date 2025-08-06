@@ -8,6 +8,8 @@
   "warehouse_settings_tab",
   "warehouse_settings_section",
   "default_set_from_warehouse",
+  "section_break_iqtn",
+  "warehouse_group_map",
   "cups_settings_tab",
   "cups_settings_section",
   "host",
@@ -124,13 +126,24 @@
    "fieldtype": "Table",
    "label": "Workflow Settings",
    "options": "Pick Stream Workflow"
+  },
+  {
+   "description": "User branch and warehouse group mapping. First item is default.",
+   "fieldname": "warehouse_group_map",
+   "fieldtype": "Table",
+   "label": "Warehouse Group Map",
+   "options": "Warehouse Group Map"
+  },
+  {
+   "fieldname": "section_break_iqtn",
+   "fieldtype": "Section Break"
   }
  ],
  "hide_toolbar": 1,
  "in_create": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-05-30 15:02:37.794259",
+ "modified": "2025-06-02 14:04:11.189655",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Pick Stream Settings",

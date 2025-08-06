@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) navigator.serviceWorker.register('/pick_stream/dev-sw.js?dev-sw', { scope: '/pick_stream/', type: 'classic' })

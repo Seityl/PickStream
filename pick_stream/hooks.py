@@ -4,7 +4,7 @@ app_name = 'pick_stream'
 app_title = 'Pick Stream'
 app_publisher = 'Jollys Pharmacy Limited'
 app_description = 'A robust, efficient, and accurate module on top of ERPNext that simplifies the re-order process, reduces errors, and enhances operational efficiency across locations.'
-app_email = 'cdgrant@jollysonline.com'
+app_email = 'jeriel@jollysonline.com'
 app_license = 'MIT'
 
 required_apps = ['ERPNext']

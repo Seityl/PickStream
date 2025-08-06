@@ -9,7 +9,8 @@ frappe.listview_settings['Crate'] = {
 			'Picking': 'orange',
             'Waiting': 'grey',
 			'In Transit': 'yellow',
-			'Verifying': 'purple'
+			'Verified': 'purple',
+			'Received': 'blue'
 		};
 		return [__(doc.status), status_colors[doc.status], 'status,=,'+doc.status];
 	},

@@ -4,8 +4,8 @@ import { FaArrowLeft, FaPlus } from 'react-icons/fa';
 import { ChevronDown, MapPin, Package, Tag } from 'lucide-react';
 import { getTransitListView } from '../../utils/api';
 import { getCurrentUser } from '../../utils/auth';
-import CreateTransitModal from '../components/CreateTransitModal';
-import { frappeClient } from '../../utils/client';
+import ConfirmationModal from '../components/ConfirmationModal';
+import { useSubmitTransit } from '../../utils/customApiHooks';
 import {toast} from 'react-toastify';
 
 type Identifier = {
@@ -31,94 +31,57 @@ export async function transitLoader() {
     throw new Response("Not Logged In", { status: 401 });
   }
   const transitList = await getTransitListView(user);
-  console.log(transitList);
   return { transitList, user };
 }
 
 function TransitList() {
   const { transitList, user } = useLoaderData() as { transitList: TransitListType; user: string };
-  const [isCreateModalOpen, setCreateModalOpen] = useState(false);
+  const [isModalOpen, setModalOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<{ code: string; type: 'crate' | 'item', from_warehouse: string, to_warehouse: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'crates' | 'identifiers'>('crates');
   const [locationFilter, setLocationFilter] = useState('');
 
-  // Debug: Log the transit list data
-  console.log('Transit List Data:', transitList);
-  console.log('Crate Details:', transitList?.crate_details);
-  console.log('Identifier Details:', transitList?.identifier_details);
+  const submitTransitMutation = useSubmitTransit();
 
-  // Use real API data with fallback to empty arrays
-  const effectiveCrates = transitList?.crate_details || [];
-  const effectiveIdentifiers = transitList?.identifier_details || [];
+  const handleOpenModal = (code: string, type: 'crate' | 'item', from_warehouse: string, to_warehouse: string) => {
+    setSelectedItem({ code, type, from_warehouse, to_warehouse });
+    setModalOpen(true);
+  };
 
-  async function submitTransitRequest(selectedItems: { crates: Crate[]; identifiers: Identifier[] }) {
-    const { crates, identifiers } = selectedItems;
-    
-    if (crates.length === 0 && identifiers.length === 0) {
-      toast.error('Please select at least one item to transit');
-      return;
+  const handleCloseModal = () => {
+    setModalOpen(false);
+    setSelectedItem(null);
+  };
+
+  const handleConfirmTransit = () => {
+    if (selectedItem) {
+      const params = {
+        user,
+        from_warehouse: selectedItem.from_warehouse,
+        to_warehouse: selectedItem.to_warehouse,
+        ...(selectedItem.type === 'crate' ? { crate_codes: [selectedItem.code] } : { identifier_codes: [selectedItem.code] })
+      };
+      submitTransitMutation.mutate(params, {
+        onSuccess: () => {
+          // Maybe show a success notification
+          toast.success(`${selectedItem.type === 'crate' ? 'Crate' : 'Item'} ${selectedItem.code} transited successfully!`);
+          handleCloseModal();
+          // You might want to refresh the list here
+        },
+        onError: (error) => {
+          // Maybe show an error notification
+          toast.error(`Error transiting ${selectedItem.type === 'crate' ? 'crate' : 'item'} ${selectedItem.code}: ${error.message}`);
+          console.error('Error submitting transit request', error);
+          handleCloseModal();
+        }
+      });
     }
+  };
 
-    // Group items by warehouse pairs
-    const transitGroups = new Map<string, { crate_codes: string[]; identifier_codes: string[]; from_warehouse: string; to_warehouse: string }>();
+  const crateCount = transitList.crate_details.length;
+  const identifierCount = transitList.identifier_details.length;
 
-    crates.forEach(crate => {
-      const key = `${crate.source_warehouse}-${crate.target_warehouse}`;
-      if (!transitGroups.has(key)) {
-        transitGroups.set(key, {
-          crate_codes: [],
-          identifier_codes: [],
-          from_warehouse: crate.source_warehouse,
-          to_warehouse: crate.target_warehouse
-        });
-      }
-      transitGroups.get(key)!.crate_codes.push(crate.crate_code);
-    });
-
-    identifiers.forEach(identifier => {
-      const key = `${identifier.source_warehouse}-${identifier.target_warehouse}`;
-      if (!transitGroups.has(key)) {
-        transitGroups.set(key, {
-          crate_codes: [],
-          identifier_codes: [],
-          from_warehouse: identifier.source_warehouse,
-          to_warehouse: identifier.target_warehouse
-        });
-      }
-      transitGroups.get(key)!.identifier_codes.push(identifier.identifier_code);
-    });
-
-    // Submit each group as a separate transit request
-    try {
-      for (const group of Array.from(transitGroups.values())) {
-        const params = {
-          user,
-          from_warehouse: group.from_warehouse,
-          to_warehouse: group.to_warehouse,
-          crate_codes: group.crate_codes,
-          identifier_codes: group.identifier_codes
-        };
-        
-        await frappeClient.post('pick_stream.api.submit_transit_request', params);
-        toast.success(`Transit created successfully from ${group.from_warehouse} to ${group.to_warehouse}!`);
-      }
-      setCreateModalOpen(false);
-    } catch (err: any) {
-      if (err.httpStatus === 404) {
-        toast.error("Something went wrong. Please try again.");
-      } else {
-        toast.error(err.message || "An error occurred");
-      }
-    }
-  }
-
-
-
-
-
-  const crateCount = effectiveCrates.length;
-  const identifierCount = effectiveIdentifiers.length;
-
-  const currentItems = activeTab === 'crates' ? effectiveCrates : effectiveIdentifiers;
+  const currentItems = activeTab === 'crates' ? transitList.crate_details : transitList.identifier_details;
   
   const filteredItems = locationFilter 
     ? currentItems.filter(item => 
@@ -153,7 +116,7 @@ function TransitList() {
               className='w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none'
             >
               <option value=''>Filter by location...</option>
-              {currentItems.length > 0 && Array.from(new Set([...currentItems.map(item => item.source_warehouse), ...currentItems.map(item => item.target_warehouse)])).map(location => (
+              {Array.from(new Set([...currentItems.map(item => item.source_warehouse), ...currentItems.map(item => item.target_warehouse)])).map(location => (
                 <option key={location} value={location}>{location}</option>
               ))}
             </select>
@@ -162,10 +125,7 @@ function TransitList() {
         </div>
         
         {/* Create Transit Button */}
-        <button 
-          onClick={() => setCreateModalOpen(true)}
-          className='w-full bg-gray-800 text-white py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-gray-700 transition-colors'
-        >
+        <button className='w-full bg-gray-800 text-white py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-gray-700 transition-colors'>
           <FaPlus size={14} />
           Create Transit
         </button>
@@ -225,8 +185,13 @@ function TransitList() {
                   {filteredItems.map((item) => {
                     const isCrate = 'crate_code' in item;
                     const code = isCrate ? item.crate_code : item.identifier_code;
+                    const type = isCrate ? 'crate' : 'item';
                     return (
-                      <tr key={code}>
+                      <tr 
+                        key={code}
+                        onClick={() => handleOpenModal(code, type, item.source_warehouse, item.target_warehouse)}
+                        className='hover:bg-gray-50 cursor-pointer transition-colors'
+                      >
                         <td className='px-4 py-3 text-sm font-medium text-gray-900'>{code}</td>
                         <td className='px-4 py-3 text-sm text-gray-600'>{item.source_warehouse}</td>
                         <td className='px-4 py-3 text-sm text-gray-600'>{item.target_warehouse}</td>
@@ -243,13 +208,15 @@ function TransitList() {
           )}
         </div>
       </div>
-      <CreateTransitModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setCreateModalOpen(false)}
-        onCreateTransit={submitTransitRequest}
-        availableCrates={effectiveCrates}
-        availableIdentifiers={effectiveIdentifiers}
-      />
+      {selectedItem && (
+        <ConfirmationModal
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          onConfirm={handleConfirmTransit}
+          title={`Confirm Transit`}
+          message={`Are you sure you want to send ${selectedItem.type} ${selectedItem.code} to transit?`}
+        />
+      )}
     </main>
   );
 }

@@ -4,17 +4,22 @@
 import frappe
 from frappe.model.document import Document
 
-import pick_stream.exceptions
-from pick_stream.core import crate_is_closed
+import pick_stream
 
 class Stream(Document):
+    def before_save(self):
+        self.update_previous_status()
+
     def on_update(self):
         self.update_crate()
+
+    def update_previous_status(self):
+        self.previous_status = frappe.db.get_value(self.doctype, self.name, 'status')
 
     def update_crate(self):
         crate = frappe.get_doc('Crate', self.crate_code)
         self.validate_crate(crate)
-        status = get_updated_crate_status(self.crate_code, self.user)
+        status = self.get_updated_crate_status()
         
         crate.update({
             'status': status,
@@ -55,7 +60,7 @@ class Stream(Document):
 
         except Exception as e:
             frappe.db.rollback()
-            raise pick_stream.exceptions.ValidationError(f'Failed to update crate {self.crate_code}. {str(e)}')
+            raise pick_stream.exceptions.SystemError(f'Failed to update crate {self.crate_code}. {str(e)}')
     
     def validate_crate(self, crate):
         if crate.from_warehouse and crate.from_warehouse != self.from_warehouse:
@@ -70,8 +75,13 @@ class Stream(Document):
                 f'Cannot redirect to {self.to_warehouse}.'
             )
 
-# A lot to be done here 20/05/2025
-def get_updated_crate_status(crate_code:str, user:str) -> str:
-    if crate_is_closed(crate_code, user):
-        return 'Waiting'
-    return 'Picking'
+    def get_updated_crate_status(self):
+        status_mapping = {
+            'Picking': 'Picking',
+            'Waiting': 'Waiting', 
+            'In Transit': 'In Transit',
+            'Verified': 'Verified',
+            'Received': 'Received',
+            'Completed': 'Available'
+        }
+        return status_mapping.get(self.status)

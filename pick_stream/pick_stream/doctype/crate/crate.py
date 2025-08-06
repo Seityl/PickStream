@@ -8,8 +8,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-import pick_stream.exceptions
-from pick_stream.core import get_pick_stream_settings, get_child_warehouses
+import pick_stream
 
 class Crate(Document):
     def autoname(self):
@@ -22,7 +21,7 @@ class Crate(Document):
     def validate(self):
         self.validate_item_groups()
         self.validate_streams()
-        self.validate_items()
+        # self.validate_items()
         self.validate_warehouse_logic()
 
     def validate_item_groups(self):
@@ -67,7 +66,7 @@ class Crate(Document):
             raise pick_stream.exceptions.ValidationError("From Warehouse and To Warehouse cannot be the same")
         
         if self.items:
-            child_warehouses = get_child_warehouses(self.from_warehouse)
+            child_warehouses = pick_stream.utils.get_child_warehouses(self.from_warehouse)
             for row in self.items:
                 if self.from_warehouse and row.from_warehouse and row.from_warehouse not in child_warehouses:  
                     raise pick_stream.exceptions.ValidationError(f"Item's From Warehouse '{row.from_warehouse}' in row {row.idx} not under Crate's From Warehouse '{self.from_warehouse}'. Contact IT.")
@@ -104,7 +103,7 @@ class Crate(Document):
         return f'{color_range.prefix}{str(random_number).zfill(4)}'
 
     def get_color_range_and_prefix(self):
-        settings = get_pick_stream_settings()
+        settings = pick_stream.utils.get_settings()
         if not settings or not settings.crate_settings:
             frappe.throw('Crate settings not found in Pick Stream Settings')
 

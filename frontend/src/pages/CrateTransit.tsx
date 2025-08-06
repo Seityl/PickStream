@@ -1,39 +1,51 @@
-import {useState, useEffect} from 'react';
-import { useSearchParams, useParams, Link, LoaderFunctionArgs, useLoaderData,  } from 'react-router';
+import { useState, useEffect } from 'react';
+import { Link, useLoaderData, useParams, LoaderFunctionArgs } from 'react-router';
 import { useAuth } from '../context/AuthContext';
-import {frappeClient} from '../../utils/client';
-import { getCurrentUser } from '../../utils/auth';
+import { getCrateDetails } from '../../utils/api';
+import { frappeClient } from '../../utils/client';
 import { FaArrowLeft } from "react-icons/fa";
-// import {getCrateVerificationDetails } from '../../utils/api';
-import { toast
+import { toast } from 'react-toastify';
 
- } from 'react-toastify';
-type MaterialRequest = {
-  name: string;
-  source_warehouse: string | null;
-  target_warehouse: string;
-  status: string;
-  item_group_availability: []
+export const crateTransitLoader = async ({ params }: LoaderFunctionArgs) => {
+  const { crateId } = params;
+  if (!crateId) {
+    throw new Response("Crate ID not found", { status: 404 });
+  }
+  const crateDetails = await getCrateDetails(crateId);
+  return { crateDetails };
 };
 
+
 function CrateTransit() {
-  const crateDetails = useLoaderData();
-  const [items, setItems] = useState<any[]>(crateDetails && crateDetails.items || []); 
-  const [materialRequestData, setMaterialRequestData] = useState<MaterialRequest | null>(null);
+  const { crate_code } = useParams<{ crate_code: string }>();
+  const { user } = useAuth();
+  const { crateDetails } : any = useLoaderData();
+  const [items, setItems] = useState<any[]>([]); // Initialize as empty array
+  
+  // Update items when crateDetails becomes available
+  useEffect(() => {
+    if (crateDetails?.items) {
+      setItems(crateDetails.items);
+    }
+  }, [crateDetails]);
   
   async function closeCrate() {
     try {
-      const params = {crate_code: crateDetails.crate_code, /*user: await getCurrentUser()*/};
-
+      const params = { crate_code: crate_code };
       const response = await frappeClient.get('pick_stream.api.submit_close_crate_request', params);
       console.log(response.data.message);
+      toast.success("Crate verified successfully");
     }
     catch(err: any) {
       if (err.httpStatus === 404) {
         toast.error("Something went wrong. Please try again.");
+      } else {
+        toast.error(err.message || "An error occurred");
       }
     }
   }
+  
+
   
   return (
     <main className='min-h-screen'>
@@ -42,7 +54,7 @@ function CrateTransit() {
           <FaArrowLeft size={24}/>
         </Link>
 
-        <p className='mx-auto text-xl font-semibold'>{crateDetails && crateDetails.crate_code}</p>
+        <p className='mx-auto text-xl font-semibold'>{crateDetails?.crate_code}</p>
       </header>
       <div className='px-4 mt-10'>
         {crateDetails && crateDetails.items?.length > 0 ? (
@@ -63,7 +75,7 @@ function CrateTransit() {
             </thead>
             <tbody>
               {items.map((item, index) => (
-                <tr key={item.name} className="hover:bg-gray-50">
+                <tr key={item.item_code} className="hover:bg-gray-50">
                   <td className="border border-gray-300 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap px-4 py-2">
                     {item.item_code} {item.item_name}
                   </td>
@@ -109,8 +121,3 @@ function CrateTransit() {
 }
 
 export default CrateTransit;
-
-// export async function CrateVerificationLoader({params}: LoaderFunctionArgs) {
-//   const crateVerificationDetails = await getCrateVerificationDetails();
-//   return crateVerificationDetails;
-// }

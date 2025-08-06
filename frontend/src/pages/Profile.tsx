@@ -1,17 +1,19 @@
-import { useLoaderData } from 'react-router';
+import React from 'react';
+import { useLoaderData, useNavigate } from 'react-router';
 import avatar from '../assets/profile-placeholder.jpg';
-// import { useAuth } from '../context/AuthContext';
-import { getUserProfile } from '../../utils/api';
+import { useAuth } from '../context/AuthContext';
 import { getCurrentUser } from '../../utils/auth';
-import { useFrappeAuth } from 'frappe-react-sdk';
+import { getUserProfile } from '../../utils/api';
+
 function Profile() {
   const userProfile = useLoaderData();
-  // const { user, signOut } = useAuth();
-  const {currentUser, logout} = useFrappeAuth();
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+  
   async function handleSignOut() {
     try {
-      await logout();
-      localStorage.removeItem('user');
+      await signOut();
+      navigate('/login');
     } catch (e) {
       alert('Something went wrong.');
     }
@@ -21,7 +23,7 @@ function Profile() {
     <main className='min-h-screen flex flex-col px-4 pt-10'>
 
       <div className='w-[160px] h-[160px] self-center mb-5'>
-        <img className='object-cover h-full w-full rounded-[50%]' src={avatar} alt={currentUser!}/>
+        <img className='object-cover h-full w-full rounded-[50%]' src={avatar} alt={user || 'User'}/>
       </div>
       
       <p className='text-3xl font-semibold self-center mb-4'>Walter Perkins</p>
@@ -67,7 +69,6 @@ function Profile() {
 }
 
 export default Profile;
-
 
 export async function profileLoader() {
   const user = await getCurrentUser();

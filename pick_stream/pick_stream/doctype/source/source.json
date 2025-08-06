@@ -21,7 +21,9 @@
   "section_break_8u0d",
   "amended_from",
   "items",
-  "item_crates"
+  "item_crates",
+  "section_break_eqwj",
+  "notes"
  ],
  "fields": [
   {
@@ -138,16 +140,27 @@
   {
    "fieldname": "item_crates",
    "fieldtype": "Table",
-   "label": "Item Crates",
-   "options": "Item Crates"
+   "label": "Item Status",
+   "options": "Item Crates",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_eqwj",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Long Text",
+   "label": "Notes",
+   "read_only": 1
   }
  ],
  "hide_toolbar": 1,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-05-22 15:18:52.235794",
- "modified_by": "Administrator",
+ "modified": "2025-08-01 10:00:45.232653",
+ "modified_by": "jeriel@jollysonline.com",
  "module": "Pick Stream",
  "name": "Source",
  "naming_rule": "Random",

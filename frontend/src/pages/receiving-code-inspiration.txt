@@ -1,0 +1,242 @@
+import { useState } from 'react';
+import { ArrowLeft, Scan, Package, CheckCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/hooks/use-toast';
+
+interface EligibleItem {
+  id: string;
+  type: 'crate' | 'identifier';
+  code: string;
+  name: string;
+  location: string;
+}
+
+interface ReceivedItem extends EligibleItem {
+  receivedAt: Date;
+}
+
+const ReceiveGoods = () => {
+  const [scanInput, setScanInput] = useState('');
+  const [receivedItems, setReceivedItems] = useState<ReceivedItem[]>([]);
+  const { toast } = useToast();
+
+  // Eligible items that can be received
+  const eligibleItems: EligibleItem[] = [
+    { id: '1', type: 'crate', code: 'CR001', name: 'Electronics Crate A', location: 'Warehouse A' },
+    { id: '2', type: 'crate', code: 'CR002', name: 'Medical Supplies B', location: 'Warehouse B' },
+    { id: '3', type: 'crate', code: 'CR003', name: 'Office Equipment C', location: 'Warehouse A' },
+    { id: '4', type: 'identifier', code: 'ID001', name: 'Sample Kit Alpha', location: 'Lab 1' },
+    { id: '5', type: 'identifier', code: 'ID002', name: 'Testing Device Beta', location: 'Lab 2' },
+    { id: '6', type: 'identifier', code: 'ID003', name: 'Research Tool Gamma', location: 'Lab 1' },
+  ];
+
+  // Get the scanned item if it exists and is eligible
+  const scannedItem = scanInput.trim() 
+    ? eligibleItems.find(item => item.code.toLowerCase() === scanInput.trim().toLowerCase())
+    : null;
+
+  // Check if the scanned item has already been received
+  const isAlreadyReceived = scannedItem 
+    ? receivedItems.some(item => item.code === scannedItem.code)
+    : false;
+
+  const handleReceive = () => {
+    if (!scannedItem) return;
+
+    if (isAlreadyReceived) {
+      toast({
+        title: "Already Received",
+        description: `${scannedItem.name} has already been received.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const newItem: ReceivedItem = {
+      ...scannedItem,
+      receivedAt: new Date(),
+    };
+    
+    setReceivedItems(prev => [newItem, ...prev]);
+    toast({
+      title: "Item Received",
+      description: `${scannedItem.name} has been successfully received.`,
+    });
+    setScanInput('');
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && scannedItem && !isAlreadyReceived) {
+      handleReceive();
+    }
+  };
+
+  const removeReceivedItem = (itemId: string) => {
+    setReceivedItems(prev => prev.filter(item => item.id !== itemId));
+    toast({
+      title: "Item Removed",
+      description: "Item has been removed from received list.",
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <div className="border-b bg-card p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link to="/">
+              <Button variant="ghost" size="icon">
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+            </Link>
+            <div>
+              <h1 className="text-xl font-semibold">Receive Goods</h1>
+              <p className="text-sm text-muted-foreground">Scan Crate or Identifier</p>
+            </div>
+          </div>
+          <Badge variant="outline" className="font-mono">
+            {receivedItems.length} received
+          </Badge>
+        </div>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Scan Section */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Scan className="h-5 w-5" />
+              Scan Item Code
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Enter or scan item code..."
+                value={scanInput}
+                onChange={(e) => setScanInput(e.target.value)}
+                onKeyPress={handleKeyPress}
+                className="font-mono"
+                autoFocus
+              />
+              <Button 
+                onClick={handleReceive} 
+                disabled={!scannedItem || isAlreadyReceived}
+                variant={scannedItem && !isAlreadyReceived ? "default" : "secondary"}
+              >
+                Receive
+              </Button>
+            </div>
+            
+            {/* Validation feedback */}
+            {scanInput.trim() && (
+              <div className="text-sm">
+                {scannedItem ? (
+                  <div className={`p-3 rounded-lg ${isAlreadyReceived ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300' : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'}`}>
+                    <p className="font-medium">
+                      {isAlreadyReceived ? '⚠️ Already Received' : '✅ Ready to Receive'}
+                    </p>
+                    <p>{scannedItem.name} - {scannedItem.location}</p>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300">
+                    <p className="font-medium">❌ Item not found</p>
+                    <p>Code "{scanInput}" is not eligible for receiving</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Eligible Items List */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5" />
+              Eligible Items
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {eligibleItems.map((item) => {
+                const isReceived = receivedItems.some(received => received.code === item.code);
+                return (
+                  <div 
+                    key={item.id} 
+                    className={`p-3 border rounded-lg flex items-center justify-between ${
+                      isReceived 
+                        ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' 
+                        : 'bg-muted/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      {isReceived && (
+                        <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                      )}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="font-mono text-xs">
+                            {item.code}
+                          </Badge>
+                          <Badge variant="secondary" className="text-xs">
+                            {item.type === 'crate' ? 'Crate' : 'Identifier'}
+                          </Badge>
+                        </div>
+                        <p className="font-medium text-sm">{item.name}</p>
+                        <p className="text-xs text-muted-foreground">{item.location}</p>
+                      </div>
+                    </div>
+                    {isReceived && (
+                      <Badge variant="outline" className="text-xs text-green-600 dark:text-green-400">
+                        Received
+                      </Badge>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Received Items Summary */}
+        {receivedItems.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Recently Received ({receivedItems.length})</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {receivedItems.slice(0, 5).map((item) => (
+                  <div key={`${item.id}-${item.receivedAt.getTime()}`} className="flex items-center justify-between p-2 bg-muted/50 rounded">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="font-mono text-xs">
+                        {item.code}
+                      </Badge>
+                      <span className="text-sm">{item.name}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {item.receivedAt.toLocaleTimeString()}
+                    </span>
+                  </div>
+                ))}
+                {receivedItems.length > 5 && (
+                  <p className="text-xs text-center text-muted-foreground pt-2">
+                    and {receivedItems.length - 5} more...
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default ReceiveGoods;

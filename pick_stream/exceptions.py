@@ -8,3 +8,6 @@ class DoesNotExistError(Exception):
 	
 class PermissionError(Exception):
 	http_status_code = 403
+
+class SystemError(Exception):
+	http_status_code = 500

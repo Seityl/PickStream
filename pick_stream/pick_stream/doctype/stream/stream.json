@@ -17,6 +17,7 @@
   "item_group",
   "user",
   "status",
+  "previous_status",
   "warehouse_details_section",
   "from_warehouse",
   "column_break_ovxs",
@@ -127,7 +128,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Picking\nWaiting\nIn Transit\nVerifying\nCompleted",
+   "options": "Picking\nWaiting\nIn Transit\nVerified\nReceived\nCompleted",
    "read_only": 1,
    "reqd": 1
   },
@@ -146,13 +147,22 @@
    "options": "User",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "default": "Picking",
+   "fieldname": "previous_status",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Previous Status",
+   "options": "Picking\nWaiting\nIn Transit\nVerified\nReceived\nCompleted",
+   "read_only": 1
   }
  ],
  "force_re_route_to_default_view": 1,
  "hide_toolbar": 1,
  "in_create": 1,
  "links": [],
- "modified": "2025-05-20 14:40:55.011029",
+ "modified": "2025-07-08 14:54:24.400510",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Stream",
@@ -172,6 +182,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "search_fields": "crate_code, item_group, to_warehouse",
  "sort_field": "modified",
  "sort_order": "DESC",

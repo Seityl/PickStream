@@ -1,82 +1,98 @@
-// import axiosClient from '../../utils/client';
-import {frappeAuth} from '../../utils/client';
-import {
+import React, {
   useContext,
   useEffect,
   createContext,
   type PropsWithChildren,
   useState,
 } from 'react';
+import { frappeAuth } from '../../utils/client';
+import { getCurrentUser, clearUserSession } from '../../utils/auth';
 import { useStorageState } from '../hooks/useStorageState';
 
-const AuthContext = createContext<{
-  signIn: (email: string, password: string) => Promise<any>;
-  signOut: () => Promise<any>;
-  user?: string | null;
+interface AuthContextType {
+  signIn: (email: string, password: string) => Promise<{ error?: boolean; msg?: string }>;
+  signOut: () => Promise<void>;
+  user: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-}>({
-  signIn: async () => null,
-  signOut: async () => null,
+}
+
+const AuthContext = createContext<AuthContextType>({
+  signIn: async () => ({ error: true, msg: 'Not implemented' }),
+  signOut: async () => {},
   user: null,
   isLoading: false,
   isAuthenticated: false,
 });
 
-// This hook can be used to access the user info.
 export function useAuth() {
-  const value = useContext(AuthContext);
-  return value;
+  return useContext(AuthContext);
 }
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useStorageState('user');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    !!user
-  );
-  
-  const auth = frappeAuth;
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    setIsAuthenticated(!!user); // Set true if `user` is non-null, false otherwise
-  },)
+    async function initAuth() {
+      const currentUser = await getCurrentUser();
+      setUser(currentUser);
+      setIsAuthenticated(!!currentUser);
+      setIsLoading(false);
+    }
+    initAuth();
+  }, [setUser]);
+
+  useEffect(() => {
+    setIsAuthenticated(!!user);
+  }, [user]);
+
+  const signIn = async (email: string, password: string) => {
+    try {
+      setIsLoading(true);
+
+      const response = await frappeAuth.loginWithUsernamePassword({
+        username: email,
+        password: password,
+      });
+
+      if (response.message === 'Logged In') {
+        const loggedInUser = await frappeAuth.getLoggedInUser();
+        setUser(loggedInUser);
+        setIsAuthenticated(true);
+        return { error: false };
+      }
+
+      return { error: true, msg: 'Login failed' };
+    } catch (error: any) {
+      setIsAuthenticated(false);
+      return {
+        error: true,
+        msg: error?.response?.data?.message || 'Login failed',
+      };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      await frappeAuth.logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      clearUserSession();
+      setUser(null);
+      setIsAuthenticated(false);
+    }
+  };
 
   return (
     <AuthContext.Provider
       value={{
-        signIn: async (email: string, password: string) => {
-          try {
-            setIsLoading(true);
-
-            const response = await auth.loginWithUsernamePassword({
-              username: email,
-              password: password,
-            });
-
-            if (response.message === 'Logged In') {
-              const loggedInUser = await auth.getLoggedInUser();
-              console.log("user:", loggedInUser);
-              setUser(loggedInUser);
-              setIsAuthenticated(true);
-            }
-
-            setIsLoading(false);
-          } catch (e) {
-            setIsLoading(false);
-            setIsAuthenticated(false);
-            return { error: true, msg: (e as any).response.data.message };
-          }
-        },
-        signOut: async () => {
-          setIsLoading(true);
-
-          await auth.logout();
-          setUser(null);
-          setIsAuthenticated(false);
-
-          setIsLoading(false);
-        },
+        signIn,
+        signOut,
         user,
         isLoading,
         isAuthenticated,

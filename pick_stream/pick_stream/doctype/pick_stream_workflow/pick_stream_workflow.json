@@ -18,21 +18,26 @@
   "picking_user_branch_1",
   "picking_user_branch_2",
   "picking_user_branch_3",
+  "column_break_qykb",
+  "picking_store_1",
+  "picking_store_2",
+  "picking_store_3",
   "verification_stage_section",
   "verification_branch_1",
   "verification_branch_2",
   "verification_branch_3",
   "column_break_3",
   "verification_user_role",
-  "verification_required",
-  "verification_approval_required",
+  "verification_after_receiving",
   "transit_stage_section",
+  "transit_required",
+  "transit_after_verification",
   "transit_user_role",
   "transit_warehouse",
-  "transit_required",
   "column_break_4",
   "receiving_stage_section",
   "receiving_user_role",
+  "receiving_after_verification",
   "column_break_5",
   "workflow_settings_section",
   "send_notifications",
@@ -46,7 +51,7 @@
   },
   {
    "columns": 3,
-   "description": "The destination warehouse that will receive the goods at the end of this pick stream workflow. This determines which specific workflow path will be executed.",
+   "description": "Final destination warehouse for goods delivery.",
    "fieldname": "target_warehouse",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -82,22 +87,8 @@
    "label": "Verification Stage Configuration"
   },
   {
-   "default": "1",
-   "description": "Indicates whether the verification is mandatory for this workflow or can be skipped.",
-   "fieldname": "verification_required",
-   "fieldtype": "Check",
-   "label": "Verification Required"
-  },
-  {
    "fieldname": "column_break_3",
    "fieldtype": "Column Break"
-  },
-  {
-   "default": "0",
-   "description": "Determines if verification operations require additional approval before items can proceed to next stage.",
-   "fieldname": "verification_approval_required",
-   "fieldtype": "Check",
-   "label": "Verification Approval Required"
   },
   {
    "fieldname": "transit_stage_section",
@@ -109,22 +100,16 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "1",
-   "description": "Indicates whether the transit stage is mandatory for this workflow or if items can be directly received without intermediate transit.",
-   "fieldname": "transit_required",
-   "fieldtype": "Check",
-   "label": "Transit Required"
-  },
-  {
    "columns": 1,
    "default": "PS Transit User",
-   "description": "User role or permission level required to authorize and manage transit operations within this workflow.",
+   "depends_on": "transit_required",
+   "description": "Role required for transit operations.",
    "fieldname": "transit_user_role",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Transit User Role",
-   "options": "Role",
-   "reqd": 1
+   "mandatory_depends_on": "transit_required",
+   "options": "Role"
   },
   {
    "fieldname": "receiving_stage_section",
@@ -138,7 +123,7 @@
   {
    "columns": 1,
    "default": "PS Receive User",
-   "description": "User role or permission level required to perform receiving operations and finalize the pick stream workflow.",
+   "description": "Role required for receiving operations.",
    "fieldname": "receiving_user_role",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -157,7 +142,7 @@
   },
   {
    "columns": 2,
-   "description": "Primary warehouse location where items will be picked from inventory for this workflow.",
+   "description": "Primary picking warehouse location.",
    "fieldname": "picking_warehouse_1",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -166,21 +151,21 @@
    "reqd": 1
   },
   {
-   "description": "Alternate warehouse location where items will be picked from inventory for this workflow.",
+   "description": "Secondary picking warehouse location.",
    "fieldname": "picking_warehouse_2",
    "fieldtype": "Link",
    "label": "Picking Warehouse 2",
    "options": "Warehouse"
   },
   {
-   "description": "Alternate warehouse location where items will be picked from inventory for this workflow.",
+   "description": "Tertiary picking warehouse location.",
    "fieldname": "picking_warehouse_3",
    "fieldtype": "Link",
    "label": "Picking Warehouse 3",
    "options": "Warehouse"
   },
   {
-   "description": "User branch matching users designated to picking warehouse 1.",
+   "description": "Branch for primary warehouse users.",
    "fieldname": "picking_user_branch_1",
    "fieldtype": "Link",
    "label": "Picking User Branch 1",
@@ -188,29 +173,31 @@
    "reqd": 1
   },
   {
-   "description": "User branch matching users designated to picking warehouse 2.",
+   "description": "Branch for secondary warehouse users.",
    "fieldname": "picking_user_branch_2",
    "fieldtype": "Link",
    "label": "Picking User Branch 2",
+   "mandatory_depends_on": "doc.picking_warehouse_2",
    "options": "Branch"
   },
   {
-   "description": "User branch matching users designated to picking warehouse 3.",
+   "description": "Branch for tertiary warehouse users.",
    "fieldname": "picking_user_branch_3",
    "fieldtype": "Link",
    "label": "Picking User Branch 3",
+   "mandatory_depends_on": "doc.picking_warehouse_3",
    "options": "Branch"
   },
   {
    "default": "1",
-   "description": "Enables email or system notifications.",
+   "description": "Enable workflow notifications.",
    "fieldname": "send_notifications",
    "fieldtype": "Check",
    "label": "Send Notification"
   },
   {
    "default": "PS Verify User",
-   "description": "User role needed to verify items.",
+   "description": "Role required for verification operations.",
    "fieldname": "verification_user_role",
    "fieldtype": "Link",
    "label": "Verification User Role",
@@ -219,44 +206,104 @@
   },
   {
    "columns": 2,
-   "description": "Branch where picked items will be verified for accuracy, quality, and completeness before proceeding to next stage.",
+   "description": "Primary verification branch.",
    "fieldname": "verification_branch_1",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Verification Branch1",
+   "label": "Verification Branch 1",
    "options": "Branch",
    "reqd": 1
   },
   {
-   "description": "Alternate branch where picked items will be verified for accuracy, quality, and completeness before proceeding to next stage.",
+   "description": "Secondary verification branch.",
    "fieldname": "verification_branch_2",
    "fieldtype": "Link",
    "label": "Verification Branch 2",
-   "options": "Warehouse"
+   "options": "Branch"
   },
   {
-   "description": "Alternate branchwhere picked items will be verified for accuracy, quality, and completeness before proceeding to next stage.",
+   "description": "Tertiary verification branch.",
    "fieldname": "verification_branch_3",
    "fieldtype": "Link",
    "label": "Verification Branch 3",
-   "options": "Warehouse"
+   "options": "Branch"
   },
   {
    "columns": 1,
    "default": "Goods In Transit - JP",
-   "description": "User role or permission level required to authorize and manage transit operations within this workflow.",
+   "depends_on": "transit_required",
+   "description": "Warehouse for goods in transit.",
    "fieldname": "transit_warehouse",
    "fieldtype": "Link",
    "label": "Transit Warehouse",
+   "mandatory_depends_on": "transit_required",
+   "options": "Warehouse"
+  },
+  {
+   "default": "0",
+   "description": "Check if items are verified after receiving.",
+   "fieldname": "verification_after_receiving",
+   "fieldtype": "Check",
+   "label": "Verification After Receiving"
+  },
+  {
+   "default": "0",
+   "depends_on": "transit_required",
+   "description": "Check if items are verified before transit.",
+   "fieldname": "transit_after_verification",
+   "fieldtype": "Check",
+   "label": "Transit After Verification"
+  },
+  {
+   "default": "0",
+   "description": "Check if items are received after being verified.",
+   "fieldname": "receiving_after_verification",
+   "fieldtype": "Check",
+   "label": "Receiving After Verification"
+  },
+  {
+   "default": "0",
+   "fieldname": "transit_required",
+   "fieldtype": "Check",
+   "label": "Transit Required"
+  },
+  {
+   "fieldname": "column_break_qykb",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "description": "Store at primary picking location.",
+   "fieldname": "picking_store_1",
+   "fieldtype": "Link",
+   "label": "Picking Store 1",
    "options": "Warehouse",
    "reqd": 1
+  },
+  {
+   "columns": 2,
+   "description": "Store at secondary picking location.",
+   "fieldname": "picking_store_2",
+   "fieldtype": "Link",
+   "label": "Picking Store 2",
+   "mandatory_depends_on": "doc.picking_warehouse_2",
+   "options": "Warehouse"
+  },
+  {
+   "columns": 2,
+   "description": "Store at tertiary picking location.",
+   "fieldname": "picking_store_3",
+   "fieldtype": "Link",
+   "label": "Picking Store 3",
+   "mandatory_depends_on": "doc.picking_warehouse_3",
+   "options": "Warehouse"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-06-02 02:44:30.924190",
+ "modified": "2025-07-10 12:19:51.300010",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Pick Stream Workflow",

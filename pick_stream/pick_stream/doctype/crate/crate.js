@@ -2,12 +2,12 @@
 // For license information, please see license.txt
 
 frappe.ui.form.on("Crate", {
-    onload: function(frm) {
-        frm.get_field('items').grid.cannot_add_rows = true;
-        frm.set_df_property('items', 'cannot_delete_rows', 1);
-    },
-    
     refresh: function(frm) {
+        $('.row-check').hide();
+
+        $('button[data-original-title="Print"]').hide();
+        $('span[data-label="Print"]').closest('li').hide();
+        
         if (!frm.doc.__islocal) {
             frm.disable_save();
             frm.add_custom_button('Print Label', async function() {
@@ -15,7 +15,7 @@ frappe.ui.form.on("Crate", {
                     const printerResponse = await frappe.call({
                         method: 'pick_stream.api.get_printer_list_view',
                         freeze: true,
-                        freeze_message: 'Fetching available printers...'
+                        freeze_message: `<i class="fa fa-spinner fa-spin"></i>`
                     });
 
                     if (!printerResponse.message || !printerResponse.message.data || printerResponse.message.data.length === 0) {
@@ -75,7 +75,7 @@ frappe.ui.form.on("Crate", {
                                 }
                             },
                             freeze: true,
-                            freeze_message: 'Printing label(s)...'
+                            freeze_message: `<i class="fa fa-spinner fa-spin"></i>`
                         });
                     }, 'Print Crate Label', 'Print');
 
@@ -88,6 +88,5 @@ frappe.ui.form.on("Crate", {
                 }
             });
         }
-        $('.row-check').hide();
     }
 });

@@ -32,14 +32,12 @@
   "column_break_ehjd",
   "is_other_item",
   "column_break_ycno",
-  "verified",
   "column_break_errt",
   "references_section",
   "source",
   "stream",
   "material_request",
   "material_request_item",
-  "identifier_code",
   "column_break_dciq"
  ],
  "fields": [
@@ -199,13 +197,6 @@
    "read_only": 1
   },
   {
-   "fieldname": "identifier_code",
-   "fieldtype": "Link",
-   "label": "Identifier Code",
-   "options": "Pick Stream Identifier",
-   "read_only": 1
-  },
-  {
    "fieldname": "column_break_dciq",
    "fieldtype": "Column Break"
   },
@@ -220,12 +211,6 @@
    "fieldname": "is_other_item",
    "fieldtype": "Check",
    "label": "Is Other Item"
-  },
-  {
-   "default": "0",
-   "fieldname": "verified",
-   "fieldtype": "Check",
-   "label": "Verified"
   },
   {
    "fieldname": "picking_details_section",
@@ -264,7 +249,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-05-22 16:35:13.240433",
+ "modified": "2025-07-09 16:04:35.658737",
  "modified_by": "Administrator",
  "module": "Pick Stream",
  "name": "Source Item",

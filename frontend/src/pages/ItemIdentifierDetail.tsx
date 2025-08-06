@@ -1,26 +1,17 @@
-import {useFrappeGetCall, useFrappeAuth,} from 'frappe-react-sdk';
-import {useParams, useNavigate, redirect, Link} from 'react-router';
+import React from 'react';
+import { useParams, useNavigate, Link } from 'react-router';
 import { FaArrowLeft } from 'react-icons/fa6';
+import { useAuth } from '../context/AuthContext';
+import { useItemIdentifierDetails } from '../../utils/customApiHooks';
 
 export default function ItemIdentifierDetail() {
   const navigate = useNavigate();
-  const {currentUser} = useFrappeAuth();
-  const {id} = useParams();
-  const { data: response } = useFrappeGetCall<{ message: any }>(
-    "pick_stream.api.get_item_identifier_details",
-    {
-      item_identifier: id
-    },
-    undefined,
-    {
-      revalidateOnFocus: true
-    },
-    "GET"
-  );
-
-  const itemIdentifierDetails= response?.message.data;
-  console.log(itemIdentifierDetails)
-
+  const { user } = useAuth();
+  const { id } = useParams();
+  const { data: response, isLoading, error } = useItemIdentifierDetails(id || '');
+  
+  const itemIdentifierDetails = response?.data;
+  
   return (
     <main className="relative min-h-[calc(100vh+70px)] w-full flex flex-col">
       <header className='flex flex-row items-center px-4 py-6 bg-[#171717] text-white relative'>
