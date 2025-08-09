@@ -6,10 +6,10 @@ import { getCurrentUser } from '../../utils/auth';
 import { getUserProfile } from '../../utils/api';
 
 function Profile() {
-  const userProfile = useLoaderData();
+  const userProfile = useLoaderData() as any;
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  
+
   async function handleSignOut() {
     try {
       await signOut();
@@ -20,50 +20,35 @@ function Profile() {
   }
 
   return (
-    <main className='min-h-screen flex flex-col px-4 pt-10'>
+    <main className='min-h-screen flex flex-col bg-gray-50'>
+      <div className="bg-white p-6 shadow-sm">
+        <div className='flex flex-col items-center'>
+          <div className='w-24 h-24 self-center mb-4'>
+            <img className='object-cover h-full w-full rounded-full' src={avatar} alt={user || 'User'}/>
+          </div>
+          
+          <p className='text-2xl font-bold text-gray-800 self-center mb-1'>{userProfile?.message?.full_name || 'User Name'}</p>
 
-      <div className='w-[160px] h-[160px] self-center mb-5'>
-        <img className='object-cover h-full w-full rounded-[50%]' src={avatar} alt={user || 'User'}/>
-      </div>
-      
-      <p className='text-3xl font-semibold self-center mb-4'>Walter Perkins</p>
-
-      <p className='font-semibold self-center mb-5 py-2 px-4 bg-[#f3f3f3] rounded-[20px]'>wperkins@jollys.local</p>
-      
-      <div className='w-full bg-[#f3f3f3] rounded-[6px] p-4 mb-10'>
-        <div className='flex flex-row justify-between'>
-          <p>Points Earned</p>
-          <p>5000</p>
-        </div>
-
-        <div className='flex flex-row justify-between'>
-          <p>Branch</p>
-          <p>King George</p>
-        </div>
-
-        <div className='flex flex-row justify-between'>
-          <p>Points Earned</p>
-          <p>5000</p>
-        </div>
-
-        <div className='flex flex-row justify-between'>
-          <p>Points Earned</p>
-          <p>5000</p>
-        </div>
-
-        <div className='flex flex-row justify-between'>
-          <p>Points Earned</p>
-          <p>5000</p>
+          <p className='text-sm text-gray-500 self-center'>{userProfile?.message?.email || user || 'user@example.com'}</p>
         </div>
       </div>
-
-      <button
-        className="bg-red-700 text-white tracking-wide uppercase font-bold cursor-pointer rounded-[6px] py-2 shadow-md transition-transform active:scale-95"
-        type="button"
-        onClick={handleSignOut}
-      >
-        Sign Out
-      </button>
+      
+      <div className="mt-6">
+        <ul className="bg-white shadow-sm">
+          <li>
+            <button
+              className="w-full text-left p-4 text-red-500 font-medium flex justify-between items-center transition-colors hover:bg-gray-50"
+              type="button"
+              onClick={handleSignOut}
+            >
+              <span>Sign Out</span>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H3" />
+              </svg>
+            </button>
+          </li>
+        </ul>
+      </div>
     </main>
   );
 }

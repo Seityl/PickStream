@@ -194,7 +194,7 @@ def get_user_material_requests(user:str) -> List:
     user_branch = pick_stream.utils.get_user_branch(user)
     # Get group before branch to throw error if warehouse_group_map is not configured in settings
     warehouse_group = pick_stream.utils.get_warehouse_group(user, user_branch, settings)
-    default_branch = settings.warehouse_group_map[0].warehouse
+    default_branch = settings.warehouse_group_map[0].branch
 
     user_item_groups = pick_stream.utils.get_assigned_item_groups(user)
     child_warehouses = pick_stream.utils.get_child_warehouses(warehouse_group)
@@ -203,6 +203,7 @@ def get_user_material_requests(user:str) -> List:
     if user_branch == default_branch:
         default_set_from_warehouse = settings.default_set_from_warehouse
         source_warehouse_query = 'COALESCE(mr.set_from_warehouse, %(default_set_from_warehouse)s)'
+        warehouse_filter_condition = ''
         query_params = {
             'user': user,
             'user_item_groups': tuple(user_item_groups),
@@ -212,13 +213,14 @@ def get_user_material_requests(user:str) -> List:
 
     else:
         source_warehouse_query = '%(warehouse_group)s'
+        warehouse_filter_condition = "AND (mr.set_from_warehouse = %(warehouse_group)s)"
         query_params = {
             'user': user,
             'user_item_groups': tuple(user_item_groups),
             'child_warehouses': tuple(child_warehouses),
             'warehouse_group': warehouse_group
         }
-    
+
     mr_list = frappe.db.sql(
         f"""
             SELECT 
@@ -233,6 +235,7 @@ def get_user_material_requests(user:str) -> List:
                 mr.docstatus = 1
                 AND td.allocated_to = %(user)s
                 AND td.status = 'Open'
+                {warehouse_filter_condition}
                 AND EXISTS (
                     SELECT 1
                     FROM `tabMaterial Request Item` mri
@@ -249,7 +252,7 @@ def get_user_material_requests(user:str) -> List:
         query_params,
         as_dict=True
     ) or []
-    
+
     if not mr_list:
         return []
     
@@ -1296,10 +1299,15 @@ def get_verification_list(user:str) -> Dict:
         base_crate_condition = f"(s.to_warehouse = '{workflow.target_warehouse}' AND ic.crate_closed = 1 AND ic.verified = 0"
         base_identifier_condition = f"(s.to_warehouse = '{workflow.target_warehouse}' AND ic.verified = 0"
         
+        if workflow.transit_after_verification:
+            base_crate_condition += " AND ic.transited = 0"
+            base_identifier_condition += " AND ic.transited = 0"
+        
         if workflow.verification_after_receiving:
             crate_condition = f"{base_crate_condition} AND ic.received = 1)"
             identifier_condition = f"{base_identifier_condition} AND ic.received = 1)"
-        else:
+            
+        elif workflow.receiving_after_verification:
             crate_condition = f"{base_crate_condition} AND ic.received = 0)"
             identifier_condition = f"{base_identifier_condition} AND ic.received = 0)"
         
@@ -1382,6 +1390,9 @@ def process_verification_request(
         if not to_warehouse:
             raise pick_stream.exceptions.SystemError(f"Crate '{crate_code}' has no destination warehouse set. Contact IT.")
 
+        if not crate.streams:
+            raise pick_stream.exceptions.SystemError(f"Crate '{crate_code}' has no streams. Contact IT.")
+
     elif identifier_code:
         pick_stream.validations.validate_exists('Pick Stream Identifier', identifier_code)
         identifier = frappe.get_doc('Pick Stream Identifier', identifier_code)
@@ -1406,9 +1417,11 @@ def process_verification_request(
 
     all_updated_items = []     # List of all updated items
     all_discrepancies = []     # List of all discrepancies
+    overdelivery_items = []    # Track items with overdelivery
 
     source_item_mapping = {}   # Mapping of source to crate/identifier, item code and original qty
     original_qty_mapping = {}  # Mapping of item code to aggregate original qty
+    requested_qty_mapping = {} # Track original requested quantities
 
     verified_items = {item.item_code: int(item.qty) for item in items}
 
@@ -1418,8 +1431,25 @@ def process_verification_request(
     elif identifier_code:
         source_names = [frappe.db.get_value('Item Crates', {'identifier_code': identifier_code}, 'parent')]
     
+    source_docs = {}
     for source in source_names:
         source_doc = frappe.get_doc('Source', source)
+        source_docs[source] = source_doc
+
+    material_requests = set()
+    for source in source_names:
+        material_requests.add(source_docs[source].material_request)
+
+    for mr_name in material_requests:
+        mr_doc = frappe.get_doc('Material Request', mr_name)
+        for item in mr_doc.items:
+            if item.item_code not in requested_qty_mapping:
+                requested_qty_mapping[item.item_code] = 0
+
+            requested_qty_mapping[item.item_code] += item.qty
+
+    for source in source_names:
+        source_doc = source_docs[source]
         source_item_mapping[source] = []
         
         for item_crate in source_doc.item_crates:
@@ -1457,13 +1487,23 @@ def process_verification_request(
                     
     for item_code, verified_qty in verified_items.items():
         original_qty = original_qty_mapping.get(item_code, 0)
+        requested_qty = requested_qty_mapping.get(item_code, 0)
         if original_qty != verified_qty:
             all_discrepancies.append(frappe._dict({
                 'item_code': item_code,
                 'original_qty': original_qty,
                 'verified_qty': verified_qty,
+                'requested_qty': requested_qty,
                 'difference': verified_qty - original_qty
             }))
+
+            if verified_qty > requested_qty:
+                overdelivery_items.append(frappe._dict({
+                    'item_code': item_code,
+                    'overdelivery_qty': verified_qty - requested_qty,
+                    'verified_qty': verified_qty,
+                    'requested_qty': requested_qty
+                }))
 
     frappe.db.savepoint('process_verification_request')
 
@@ -1475,7 +1515,16 @@ def process_verification_request(
             item_code = discrepancy.item_code
             verified_qty = discrepancy.verified_qty
             original_qty = discrepancy.original_qty
-            
+            requested_qty = discrepancy.requested_qty
+
+            # For overdelivery cases, cap the material request fulfillment at requested qty
+            # and handle excess separately
+            if verified_qty > requested_qty:
+                fulfillment_qty = requested_qty
+
+            else:
+                fulfillment_qty = verified_qty
+
             # List of all sources containing this item
             sources_with_item = []
 
@@ -1491,19 +1540,17 @@ def process_verification_request(
             # Inventory discrepancy has been detected.
             # Distributing verified quantity proportionally
             # across sources due to inability to isolate root cause.
-            remaining_verified_qty = verified_qty
+            remaining_fulfillment_qty = fulfillment_qty
             for i, source_item in enumerate(sources_with_item):
                 if i == len(sources_with_item) - 1:
-                    # Last item gets the remainder to avoid rounding issues
-                    new_qty = remaining_verified_qty
+                    new_qty = remaining_fulfillment_qty
 
                 else:
                     proportion = source_item.original_qty / original_qty
-                    new_qty = int(verified_qty * proportion)
-                    remaining_verified_qty -= new_qty
+                    new_qty = int(fulfillment_qty * proportion)
+                    remaining_fulfillment_qty -= new_qty
                 
                 source_name = source_item.source_name
-
                 if source_name not in verified_qty_updates:
                     verified_qty_updates[source_name] = {}
 
@@ -1513,42 +1560,38 @@ def process_verification_request(
                     all_updated_items.append(f'{item_code} in {source_name}')
 
         for source_name in source_names:
-            source_doc = frappe.get_doc('Source', source_name)
+            source_doc = source_docs[source_name]
             source_discrepancies = []
 
             for item_crate in source_doc.item_crates:
-                if crate_code and item_crate.crate_code == crate_code:
-                    item_crate.verified = 1
+                should_update = (
+                    (crate_code and item_crate.crate_code == crate_code) or
+                    (identifier_code and item_crate.identifier_code == identifier_code)
+                )
+                if should_update:
+                    item_crate.verified = True
                     item_crate.verifying_user = user
                     item_crate.verified_timestamp = frappe.utils.now()
 
-                    if (source_name in verified_qty_updates and item_crate.item_code in verified_qty_updates[source_name]):
+                    if (source_name in verified_qty_updates and 
+                        item_crate.item_code in verified_qty_updates[source_name]):
                         new_qty = verified_qty_updates[source_name][item_crate.item_code]
                         item_crate.verified_qty = new_qty
                         
-                        # Track discrepancies for this source
                         if new_qty != item_crate.qty:
-                            source_discrepancies.append(f'Item {item_crate.item_code}: {item_crate.qty} → {new_qty} (diff: {new_qty - item_crate.qty:+d})')
-                    else:
-                        item_crate.verified_qty = item_crate.qty
-
-                elif identifier_code and item_crate.identifier_code == identifier_code:
-                    item_crate.verified = 1
-                    item_crate.verifying_user = user
-                    item_crate.verified_timestamp = frappe.utils.now()
-
-                    if (source_name in verified_qty_updates and item_crate.item_code in verified_qty_updates[source_name]):
-                        new_qty = verified_qty_updates[source_name][item_crate.item_code]
-                        item_crate.verified_qty = new_qty
-                        
-                        # Track discrepancies for this source
-                        if new_qty != item_crate.qty:
-                            source_discrepancies.append(f'Item {item_crate.item_code}: {item_crate.qty} → {new_qty} (diff: {new_qty - item_crate.qty:+d})')
+                            source_discrepancies.append(
+                                f'Item {item_crate.item_code}: {item_crate.qty} → {new_qty} '
+                                f'(diff: {new_qty - item_crate.qty:+d})'
+                            )
                     else:
                         item_crate.verified_qty = item_crate.qty
 
             if source_discrepancies:
-                discrepancy_note = f'Verification discrepancies found by {user} for {crate_code if crate_code is not None else identifier_code}:\n' + '\n'.join(source_discrepancies)
+                discrepancy_note = (
+                    f'Verification discrepancies found by {user} for '
+                    f'{crate_code if crate_code else identifier_code}:\n' + 
+                    '\n'.join(source_discrepancies)
+                )
                 
                 if source_doc.notes:
                     source_doc.notes += f'\n\n{discrepancy_note}'
@@ -1558,6 +1601,13 @@ def process_verification_request(
             source_doc.save()
 
         frappe.db.commit()
+
+        if overdelivery_items:
+            overdelivery_summary = []
+            for item in overdelivery_items:
+                overdelivery_summary.append(
+                    f"{item.item_code}: +{item.overdelivery_qty} units"
+                )
 
     except Exception as e:
         frappe.db.rollback()
@@ -1582,7 +1632,6 @@ def get_transit_list(user: str):
     identifier_verification_conditions = []
 
     for workflow in workflows:
-        transit_required_by_config = workflow.transit_required
         target_warehouse = workflow.target_warehouse
         
         picking_warehouse_stores = workflow.picking_warehouse_stores
@@ -1595,10 +1644,6 @@ def get_transit_list(user: str):
         if workflow.transit_after_verification:
             crate_condition_parts = []
             identifier_condition_parts = []
-            
-            if transit_required_by_config:
-                crate_condition_parts.append(f"(s.to_warehouse = '{target_warehouse}' AND ic.crate_closed = 1 AND ic.verified = 1 AND ic.received = 0)")
-                identifier_condition_parts.append(f"(s.to_warehouse = '{target_warehouse}' AND ic.verified = 1 AND ic.received = 0)")
             
             # Always require transit if sourced from warehouse that does not match store
             for warehouse in transit_warehouses:
@@ -1614,10 +1659,6 @@ def get_transit_list(user: str):
         else:
             crate_condition_parts = []
             identifier_condition_parts = []
-            
-            if transit_required_by_config:
-                crate_condition_parts.append(f"(s.to_warehouse = '{target_warehouse}' AND ic.crate_closed = 1 AND ic.received = 0)")
-                identifier_condition_parts.append(f"(s.to_warehouse = '{target_warehouse}' AND ic.received = 0)")
             
             # Always require transit if sourced from warehouse that does not match store
             for warehouse in transit_warehouses:
@@ -1695,23 +1736,6 @@ def get_transit_list(user: str):
         'identifier_details': identifier_details
     }
 
-def parse_codes(codes: Any) -> List[str]:
-    if isinstance(codes, str):
-        try:
-            parsed_codes = json.loads(codes)
-            if isinstance(parsed_codes, list):
-                return [str(code) for code in parsed_codes]
-            else:
-                return [str(parsed_codes)]
-        except (json.JSONDecodeError, TypeError):
-            return [str(codes)]
-    
-    elif isinstance(codes, list):
-        return [str(code) for code in codes]
-    
-    else:
-        return [str(codes)]
-
 def process_transit_request(
     user: str,
     to_warehouse:str,
@@ -1727,184 +1751,290 @@ def process_transit_request(
     pick_stream.validations.validate_exists('Warehouse', from_warehouse)
 
     if crate_codes:
-        crate_codes = parse_codes(crate_codes)
+        crate_codes = pick_stream.utils.parse_codes(crate_codes)
         [pick_stream.validations.validate_exists('Crate', crate_code) for crate_code in crate_codes]
     
     if identifier_codes:
-        identifier_codes = parse_codes(identifier_codes)
+        identifier_codes = pick_stream.utils.parse_codes(identifier_codes)
         [pick_stream.validations.validate_exists('Pick Stream Identifier', identifier_code) for identifier_code in identifier_codes]
 
     workflow_details = pick_stream.utils.get_workflow_details(to_warehouse)
-    transit_required_by_config = workflow_details.transit_required
-
-    if transit_required_by_config:
-        transit_required = True
-
-    else:
-        picking_warehouse_stores = workflow_details.picking_warehouse_stores
-        target_warehouse_store = picking_warehouse_stores.get(to_warehouse)
-        source_warehouse_store = picking_warehouse_stores.get(from_warehouse)
-        
-        # Transit is required if sourced from warehouse that does not match target warehouse's store
-        transit_required_by_source = (source_warehouse_store != target_warehouse_store)
-        transit_required = transit_required_by_source
     
+    transit_required = pick_stream.utils.check_transit_required(workflow_details.picking_warehouse_stores, from_warehouse, to_warehouse)
     if not transit_required:
-        raise pick_stream.exceptions.ValidationError(
-            f"Transit is not required from '{from_warehouse}' to '{to_warehouse}'. Contact Supervisor."
+        raise pick_stream.exceptions.SystemError(
+            f"Transit is not required from '{from_warehouse}' to '{to_warehouse}'. Contact IT."
         )
 
     if not has_role(user, 'Stock Manager'):
         validate_role(user, workflow_details.transit_user_role)
 
-    all_sources = set()
-    crate_source_map = {}
+    source_list = []
     
     for crate_code in crate_codes:
         crate_doc = frappe.get_doc('Crate', crate_code)
         
         if crate_doc.to_warehouse != to_warehouse:
-            raise pick_stream.exceptions.ValidationError(f"Crate '{crate_code}' destination is '{crate_doc.to_warehouse}', not '{to_warehouse}'. Contact IT.")
+            raise pick_stream.exceptions.SystemError(f"Crate '{crate_code}' destination is '{crate_doc.to_warehouse}', not '{to_warehouse}'. Contact IT.")
+        
+        if crate_doc.from_warehouse != from_warehouse:
+            raise pick_stream.exceptions.SystemError(f"Crate '{crate_code}' origin is '{crate_doc.from_warehouse}', not '{from_warehouse}'. Contact IT.")
         
         if not crate_doc.streams:
-            raise pick_stream.exceptions.ValidationError(f"Crate '{crate_code}' has no streams. Contact IT.")
-        
-        crate_sources = []
-        for stream_row in crate_doc.streams:
-            stream_doc = frappe.get_doc('Stream', stream_row.stream)
-            source = stream_doc.source
-            all_sources.add(source)
-            crate_sources.append(source)
-        
-        crate_source_map[crate_code] = crate_sources
+            raise pick_stream.exceptions.SystemError(f"Crate '{crate_code}' has no streams. Contact IT.")
 
+        if not crate_doc.item_groups:
+            raise pick_stream.exceptions.SystemError(f"Crate '{crate_code}' has no item groups. Contact IT.")
+
+        filters = [
+            ['crate_code', '=', crate_code],
+            ['parenttype', '=', 'Source'],
+            ['crate_closed', '=', 1],
+            ['transited', '=', 0],
+            ['received', '=', 0]
+        ]
+
+        # If workflow requires verification for transit, items must be verified
+        if (workflow_details.transit_after_verification):
+            filters.append(['verified', '=', 1])
+
+        crate_sources = frappe.get_all(
+            'Item Crates',
+            fields=['parent'],
+            filters=filters,
+            pluck='parent',
+            distinct=True
+        )
+        
+        source_list.extend(crate_sources)
+        
+    for identifier_code in identifier_codes:
+        identifier_doc = frappe.get_doc('Pick Stream Identifier', identifier_code)
+        
+        if identifier_doc.to_warehouse != to_warehouse:
+            raise pick_stream.exceptions.SystemError(f"Identifier '{identifier_code}' destination is '{identifier_doc.to_warehouse}', not '{to_warehouse}'. Contact IT.")
+
+        if identifier_doc.from_warehouse != from_warehouse:
+            raise pick_stream.exceptions.SystemError(f"Identifier '{identifier_code}' origin is '{identifier_doc.from_warehouse}', not '{from_warehouse}'. Contact IT.")
+
+        filters = [
+            ['identifier_code', '=', identifier_code],
+            ['parenttype', '=', 'Source'],
+            ['transited', '=', 0],
+            ['received', '=', 0]
+        ]
+
+        # If workflow requires verification for transit, items must be verified
+        if (workflow_details.transit_after_verification):
+            filters.append(['verified', '=', 1])
+
+        identifier_sources = frappe.get_all(
+            'Item Crates',
+            fields=['parent'],
+            filters=filters,
+            pluck='parent',
+            distinct=True
+        )
+        
+        source_list.extend(identifier_sources)
+    
+    # Remove duplicates
+    source_list = list(set(source_list))
     source_docs = {}
-    for source in all_sources:
+    for source in source_list:
         source_doc = frappe.get_doc('Source', source)
         source_docs[source] = source_doc
 
-    transit_items = []
+    source_stock_entries = {}
+
     for crate_code in crate_codes:
-        for source in crate_source_map[crate_code]:
-            source_doc = source_docs[source]
+        for source, source_doc in source_docs.items():
             crate_items = [item for item in source_doc.item_crates if item.crate_code == crate_code]
-            
             if not crate_items:
-                raise pick_stream.exceptions.SystemError(f"No items found for crate '{crate_code}' in source '{source}'. Contact IT.")
+                continue
 
             if any(not item.crate_closed for item in crate_items):
-                raise pick_stream.exceptions.SystemError(f"Crate '{crate_code}' has unclosed items in source '{source}'. Contact IT.")
+                raise pick_stream.exceptions.SystemError(
+                    f"Crate '{crate_code}' has unclosed items in source '{source}'. Contact IT."
+                )
 
-            if workflow_details.verification_required:
+            # If workflow requires verification for transit, items must be verified
+            if workflow_details.transit_after_verification:
                 if any(not item.verified for item in crate_items):
-                    raise pick_stream.exceptions.SystemError(f"Crate '{crate_code}' has unverified items in source '{source}'. Contact IT.")
-
+                    raise pick_stream.exceptions.SystemError(
+                        f"Crate '{crate_code}' has unverified items in source '{source}'. Contact IT."
+                    )
+            
+            if source not in source_stock_entries:
+                source_stock_entries[source] = {
+                    'items': []
+                }
+                    
             for item_crate in crate_items:
-                source_item = next((item for item in source_doc.items if item.name == item_crate.source_item), None)
+                source_item = next(
+                    (item for item in source_doc.items if item.name == item_crate.source_item), 
+                    None
+                )
                 if not source_item:
-                    raise pick_stream.exceptions.SystemError(f"Source item '{item_crate.source_item}' not found in source '{source}'. Contact IT.")
+                    raise pick_stream.exceptions.SystemError(
+                        f"Source item '{item_crate.source_item}' not found in source '{source}'. Contact IT."
+                    )
                 
-                item_from_warehouse = source_item.from_warehouse
-                
-                transit_items.append({
+                source_stock_entries[source]['items'].append({
                     'item_code': item_crate.item_code,
-                    's_warehouse': item_from_warehouse,
+                    's_warehouse': source_item.from_warehouse,
                     'qty': item_crate.qty,
                     'uom': source_item.uom,
+                    'material_request': source_item.material_request,
+                    'material_request_item': source_item.material_request_item,
                     'crate_code': crate_code,
                     'item_crate': item_crate.name,
                     'source': source
                 })
 
+    for identifier_code in identifier_codes:
+        for source, source_doc in source_docs.items():
+            identifier_items = [item for item in source_doc.item_crates if item.identifier_code == identifier_code]
+            if not identifier_items:
+                continue 
+
+            # If workflow requires verification for transit, items must be verified
+            if workflow_details.verification_required:
+                if any(not item.verified for item in identifier_items):
+                    raise pick_stream.exceptions.SystemError(
+                        f"Identifier '{identifier_code}' has unverified items in source '{source}'. Contact IT."
+                    )
+
+            if source not in source_stock_entries:
+                source_stock_entries[source] = {
+                    'items': []
+                }
+
+            for item_crate in identifier_items:
+                source_item = next(
+                    (item for item in source_doc.items if item.name == item_crate.source_item), 
+                    None
+                )
+                if not source_item:
+                    raise pick_stream.exceptions.SystemError(
+                        f"Source item '{item_crate.source_item}' not found in source '{source}'. Contact IT."
+                    )
+                
+                source_stock_entries[source]['items'].append({
+                    'item_code': item_crate.item_code,
+                    's_warehouse': source_item.from_warehouse,
+                    'qty': item_crate.qty,
+                    'uom': source_item.uom,
+                    'material_request': source_item.material_request,
+                    'material_request_item': source_item.material_request_item,
+                    'identifier_code': identifier_code,
+                    'item_crate': item_crate.name,
+                    'source': source
+                })
+            
     created_stock_entries = []
     
-    frappe.db.savepoint('transit_savepoint')
+    frappe.db.savepoint('process_transit_request')
     
     try:
         transit_warehouse = workflow_details.transit_warehouse
+        source_items_to_update = {}
 
-        unique_crates = list(set([item["crate_code"] for item in transit_items]))
-        total_items = len(transit_items)
-                
-        stock_entry = frappe.new_doc('Stock Entry')
-        stock_entry.update({
-            'stock_entry_type': 'Material Transfer',
-            'purpose': 'Material Transfer',
-            'to_warehouse': transit_warehouse,
-            'remarks': f'Transit Transfer\n\nOrigin: {from_warehouse}\nTransit Hub: {transit_warehouse}\nFinal Destination: {to_warehouse}\nProcessed by: {user}\n\nCrates ({len(unique_crates)}): {", ".join(unique_crates)}\nTotal Items: {total_items}\n\nThis transfer moves items to transit warehouse before final delivery to destination.'
-        })
-        
-        for item in transit_items:
-            stock_entry.append('items', {
-                'item_code': item['item_code'],
-                's_warehouse': item['s_warehouse'],
-                'qty': item['qty'],
-                'uom': item['uom'],
+        for source, stock_entry_data in source_stock_entries.items():
+            items = stock_entry_data['items']
+            source_doc = source_docs[source]
+            
+            unique_crates = list(set([item.get('crate_code') for item in items if item.get('crate_code')]))
+            unique_identifiers = list(set([item.get('identifier_code') for item in items if item.get('identifier_code')]))
+            total_items = len(items)
+            
+            codes_info = []
+            if unique_crates:
+                codes_info.append(f"Crates ({len(unique_crates)}): {', '.join(unique_crates)}")
+            if unique_identifiers:
+                codes_info.append(f"Identifiers ({len(unique_identifiers)}): {', '.join(unique_identifiers)}")
+            
+            stock_entry_remarks = f'Transit Transfer from {from_warehouse} to {transit_warehouse} for {", ".join(codes_info)} (Source: <a href="/app/source/{source}">{source}</a>)'
+                    
+            stock_entry = frappe.new_doc('Stock Entry')
+            stock_entry.update({
+                'stock_entry_type': 'Material Transfer',
+                'purpose': 'Material Transfer',
+                'from_warehouse': from_warehouse,
+                'to_warehouse': transit_warehouse,
+                'remarks': stock_entry_remarks,
+                'add_to_transit': True
             })
             
-        stock_entry.insert()
-        stock_entry.submit()
+            for item in items:
+                stock_entry.append('items', {
+                    'item_code': item['item_code'],
+                    's_warehouse': item['s_warehouse'],
+                    'qty': item['qty'],
+                    'uom': item['uom'],
+                    'material_request': item['material_request'],
+                    'material_request_item': item['material_request_item']
+                })
+                
+                # Track source items to be updated
+                if source not in source_items_to_update:
+                    source_items_to_update[source] = []
+                
+                source_items_to_update[source].append({
+                    'item_crate': item['item_crate'],
+                    'stock_entry': None,  # Will be set after stock entry creation
+                    'stock_entry_detail': None  # Will be set after stock entry creation
+                })
+                
+            stock_entry.insert()
+            stock_entry.submit()
 
-        comment_text = f'''
-            <div style="line-height: 1.4;">
-                <p style="margin: 5px 0;"><strong>Route:</strong> {from_warehouse} → {to_warehouse}</p>
-                <p style="margin: 5px 0;"><strong>Processed by:</strong> {user}</p>
-                <h5 style="color: #1976d2; margin: 15px 0 8px 0;">Summary:</h5>
-                <ul style="margin: 0; padding-left: 20px;">
-                    <li><strong>Crates:</strong> {", ".join(unique_crates)} <em>({len(unique_crates)} total)</em></li>
-                </ul>
-            </div>
-        '''
+            comment_text = f'''
+                <div style="line-height: 1.4;">
+                    <p style="margin: 5px 0;"><strong>Route:</strong> {from_warehouse} → {transit_warehouse} → {to_warehouse}</p>
+                    <p style="margin: 5px 0;"><strong>Processed by:</strong> {user}</p>
+                    <p style="margin: 5px 0;"><strong>Source:</strong> <a href="/app/source/{source}">{source}</a></p>
+                    <h5 style="margin: 15px 0 8px 0;">Summary:</h5>
+                    <ul style="margin: 0; padding-left: 20px;">
+                        {f"<li><strong>Crates:</strong> {', '.join(unique_crates)} <em>({len(unique_crates)} total)</em></li>" if unique_crates else ""}
+                        {f"<li><strong>Identifiers:</strong> {', '.join(unique_identifiers)} <em>({len(unique_identifiers)} total)</em></li>" if unique_identifiers else ""}
+                        <li><strong>Total Items:</strong> {total_items}</li>
+                    </ul>
+                </div>
+            '''
 
-        stock_entry.add_comment('Comment', comment_text)
-        created_stock_entries.append(stock_entry.name)
+            stock_entry.add_comment('Comment', comment_text)
+            created_stock_entries.append(stock_entry.name)
 
-        for item in transit_items:
-            source_doc = source_docs[item['source']]
+            for i, update_item in enumerate(source_items_to_update[source]):
+                if update_item['stock_entry'] is None and update_item['stock_entry_detail'] is None:
+                    update_item['stock_entry'] = stock_entry.name
+                    update_item['stock_entry_detail'] = stock_entry.items[i].name
+
+        # Now process source item records that need to be updated
+        for source, updates in source_items_to_update.items():
+            source_doc = source_docs[source]
             
-            stock_entry_item = None
-            for se_item in stock_entry.items:
-                if (se_item.item_code == item['item_code'] and 
-                    se_item.s_warehouse == item['s_warehouse'] and
-                    se_item.qty == item['qty'] and
-                    se_item.uom == item['uom']):
-                    stock_entry_item = se_item
-                    break
-            
-            # Find the specific item_crate and update fields
-            for item_crate in source_doc.item_crates:
-                if item_crate.name == item['item_crate']:
-                    item_crate.transited = True
-                    item_crate.transit_stock_entry = stock_entry.name
-                    if stock_entry_item:
-                        item_crate.transit_stock_entry_detail = stock_entry_item.name
-                    break
-            
-            # Save the updated source document
+            for update_info in updates:
+                for item_crate in source_doc.item_crates:
+                    if item_crate.name == update_info['item_crate']:
+                        item_crate.transit_stock_entry_detail = update_info['stock_entry_detail']
+                        item_crate.transit_stock_entry = update_info['stock_entry']
+                        item_crate.transited_timestamp = frappe.utils.now()
+                        item_crate.transit_user = user
+                        item_crate.transited = True
+                        break
+                
             source_doc.save()
             
-        # for crate_code in crate_codes:
-        #     frappe.db.set_value('Crate', crate_code, {
-        #         'status': 'In Transit',
-        #         'transit_user': user
-        #     })
-        
-        # for crate_code in crate_codes:
-        #     for source in crate_source_map[crate_code]:
-        #         streams = frappe.get_all('Stream', 
-        #             filters={'crate_code': crate_code, 'source': source},
-        #             fields=['name']
-        #         )
-        #         for stream in streams:
-        #             frappe.db.set_value('Stream', stream.name, 'status', 'In Transit')
-        
         frappe.db.commit()
+        
+        return f'Transit successful. Created {len(created_stock_entries)} stock entries: {", ".join(created_stock_entries)}'
         
     except Exception as e:
         frappe.db.rollback()
         raise pick_stream.exceptions.ValidationError(f'Error during transit: {str(e)}')
 
-# TODO: Facilitate Mega goods being picked at mega to not requrie transit
 def get_receiving_list(user: str) -> Dict:
     pick_stream.validations.validate_exists('User', user)
 
@@ -1940,47 +2070,24 @@ def get_receiving_list(user: str) -> Dict:
                 crate_condition = f'{base_crate_condition})'
                 identifier_condition = f'{base_identifier_condition})'
         
-        transit_required_by_config = workflow.transit_required
-        if transit_required_by_config:
-            crate_condition = crate_condition.rstrip(')') + " AND ic.transited = 1)"
-            identifier_condition = identifier_condition.rstrip(')') + " AND ic.transited = 1)"
-
-        else:
-            # Check if transit is required based on warehouse stores
-            picking_warehouse_stores = workflow.picking_warehouse_stores
-            target_warehouse_store = picking_warehouse_stores.get(workflow.target_warehouse)
+        picking_warehouse_stores = workflow.picking_warehouse_stores
+        transit_conditions = []
+        
+        for picking_warehouse, store in picking_warehouse_stores.items():
+            # Check if transit is required based on from and to warehouse
+            transit_required_by_source = (store != workflow.target_warehouse)
             
-            transit_required_warehouses = []
-            transit_not_required_warehouses = []
-            
-            for picking_warehouse, store in picking_warehouse_stores.items():
-                if store == workflow.target_warehouse:
-                    transit_not_required_warehouses.append(picking_warehouse)
-
-                elif store != target_warehouse_store:
-                    transit_required_warehouses.append(picking_warehouse)
-            
-            if transit_required_warehouses or transit_not_required_warehouses:
-                conditions = []
-                
-                # Items from same store can be received directly
-                if transit_not_required_warehouses:
-                    same_store_condition = "s.from_warehouse IN ({})".format(
-                        ', '.join([f"'{wh}'" for wh in transit_not_required_warehouses])
-                    )
-                    conditions.append(same_store_condition)
-                
+            if transit_required_by_source:
                 # Items from different stores must be transited first
-                if transit_required_warehouses:
-                    different_store_condition = "(s.from_warehouse IN ({}) AND ic.transited = 1)".format(
-                        ', '.join([f"'{wh}'" for wh in transit_required_warehouses])
-                    )
-                    conditions.append(different_store_condition)
-                
-                if conditions:
-                    transit_condition = "({})".format(' OR '.join(conditions))
-                    crate_condition = crate_condition.rstrip(')') + f" AND {transit_condition})"
-                    identifier_condition = identifier_condition.rstrip(')') + f" AND {transit_condition})"
+                transit_conditions.append(f"(s.from_warehouse = '{picking_warehouse}' AND ic.transited = 1)")
+            else:
+                # Items from same store can be received directly
+                transit_conditions.append(f"s.from_warehouse = '{picking_warehouse}'")
+        
+        if transit_conditions:
+            transit_condition = "({})".format(' OR '.join(transit_conditions))
+            crate_condition = crate_condition.rstrip(')') + f" AND {transit_condition})"
+            identifier_condition = identifier_condition.rstrip(')') + f" AND {transit_condition})"
         
         crate_receiving_conditions.append(crate_condition)
         identifier_receiving_conditions.append(identifier_condition)
@@ -2067,53 +2174,37 @@ def process_receiving_request(
         pick_stream.validations.validate_exists('Crate', code)
         crate_code = True
         filter_field = 'crate_code'
+        code_doc = frappe.get_doc('Crate', code)
 
     except pick_stream.exceptions.DoesNotExistError:
         try:
             pick_stream.validations.validate_exists('Pick Stream Identifier', code)
             identifier_code = True
             filter_field = 'identifier_code'
+            code_doc = frappe.get_doc('Pick Stream Identifier', code)
 
         except pick_stream.exceptions.DoesNotExistError:
             raise pick_stream.exceptions.DoesNotExistError(f'Code {code} not found.')
     
     workflow_details = pick_stream.utils.get_workflow_details(to_warehouse)
     if not has_role(user, 'Stock Manager'):
+        # TODO: Create global receiving role rather than basing it off workflow
         validate_role(user, workflow_details.receiving_user_role)
 
-    # Determine if transit was required based on workflow
-    transit_required_by_config = workflow_details.transit_required
-    if transit_required_by_config:
-        transit_required = True
-    
-    else:
-        # Check if transit was required based on from warehouse
-        picking_warehouse_stores = workflow_details.picking_warehouse_stores
-        source_warehouse_store = picking_warehouse_stores.get(from_warehouse)
-        transit_required_by_source = (source_warehouse_store != to_warehouse)
-        transit_required = transit_required_by_source
-
-    if crate_code:
-        code_doc = frappe.get_doc('Crate', code)
-
-    elif identifier_code:
-        code_doc = frappe.get_doc('Pick Stream Identifier', code)
+    # Check if transit was required based on from and to warehouse
+    transit_required = pick_stream.utils.check_transit_required(workflow_details.picking_warehouse_stores, from_warehouse, to_warehouse)
 
     filters = [
         [filter_field, '=', code],
-        ['received', '=', 0],
+        ['received', '=', 0]
     ]
 
     if transit_required:
         # If transit is required, items must be transited
         filters.append(['transited', '=', 1])
         
-        # If workflow requires verification before transit, items must be verified
-        if workflow_details.transit_after_verification:
-            filters.append(['verified', '=', 1])
-
-    else:
-        # If no transit required, items must be verified
+    # If workflow requires verification for receiving (either before transit or after receiving), items must be verified
+    if (transit_required and workflow_details.transit_after_verification) or workflow_details.receiving_after_verification:
         filters.append(['verified', '=', 1])
 
     # Only add crate_closed filter if it's a crate code
@@ -2183,21 +2274,20 @@ def process_receiving_request(
     source_stock_entries = {}
     for source, source_doc in source_docs.items():
         if crate_code:
-            crate_items = [item for item in source_doc.item_crates if item.crate_code == code]
+            code_items = [item for item in source_doc.item_crates if item.crate_code == code]
         else:  # identifier_code
-            crate_items = [item for item in source_doc.item_crates if item.identifier_code == code]
+            code_items = [item for item in source_doc.item_crates if item.identifier_code == code]
             
-        if not crate_items:
+        if not code_items:
             raise pick_stream.exceptions.SystemError(f"No items found for code '{crate_code}' in source '{source}'. Contact IT.")
         
-        for row in crate_items:
+        for row in code_items:
             source_item = next((item for item in source_doc.items if item.name == row.source_item), None)
             if not source_item:
                 raise pick_stream.exceptions.SystemError(f"Source item '{row.source_item}' not found in source '{source}'. Contact IT.")
             
             if source not in source_stock_entries:
                 source_stock_entries[source] = {
-                    'source': source,
                     'items': []
                 }
 
@@ -2213,12 +2303,20 @@ def process_receiving_request(
                 'identifier_code': code if identifier_code else None,
                 'item_code': row.item_code,
                 'source_item_name': source_item.name,
-                'material_request': source_item.material_request,
-                'material_request_item': source_item.material_request_item,
-                'stock_entry': source_item.transit_stock_entry if transit_required else None,
-                'stock_entry_detail': source_item.transit_stock_entry_detail if transit_required else None,
+                'material_request': source_item.material_request if not transit_required else None,
+                'material_request_item': source_item.material_request_item if not transit_required else None,
+                'stock_entry': row.transit_stock_entry if transit_required else None,
+                'stock_entry_detail': row.transit_stock_entry_detail if transit_required else None,
                 'from_warehouse': row.from_warehouse if not transit_required else transit_warehouse
             })
+
+        if transit_required and not all(
+            item['stock_entry'] == source_stock_entries[source]['items'][0]['stock_entry']
+            for item in source_stock_entries[source]['items']
+        ):
+            raise pick_stream.exceptions.SystemError(f"Stock entry discrepancy in source '{source}'. Contact IT.")
+
+        source_stock_entries[source]['stock_entry'] = source_stock_entries[source]['items'][0]['stock_entry']
 
     frappe.db.savepoint('process_receiving_request')
 
@@ -2234,6 +2332,7 @@ def process_receiving_request(
             if transit_required:
                 actual_from_warehouse = transit_warehouse
                 stock_entry_remarks = f'Receiving from {actual_from_warehouse} to {to_warehouse} for code: {code} (Source: <a href="/app/source/{source}">{source}</a>)'
+                stock_entry.outgoing_stock_entry = stock_entry_data['stock_entry']
 
             else:
                 actual_from_warehouse = from_warehouse
@@ -2244,7 +2343,7 @@ def process_receiving_request(
                 'purpose': 'Material Transfer',
                 'from_warehouse': actual_from_warehouse,
                 'to_warehouse': to_warehouse,
-                'remarks': stock_entry_remarks
+                'remarks': stock_entry_remarks,
             })
             
             for item in items:
@@ -2255,7 +2354,9 @@ def process_receiving_request(
                     'item_code': item['item_code'],
                     's_warehouse': item['from_warehouse'],
                     'material_request': item['material_request'],
-                    'material_request_item': item['material_request_item']
+                    'material_request_item': item['material_request_item'],
+                    'against_stock_entry': item['stock_entry'],
+                    'ste_detail': item['stock_entry_detail']
                 })
 
                 # Track source items to be updated
@@ -2272,6 +2373,7 @@ def process_receiving_request(
 
             stock_entry.insert()
             stock_entry.submit()
+            stock_entry.add_comment('Info', stock_entry_remarks)
 
             for i, update_item in enumerate(source_items_to_update[source]):
                 if update_item['stock_entry'] is None and update_item['stock_entry_detail'] is None:  # Only update if not already set
@@ -2307,9 +2409,33 @@ def process_receiving_request(
 
             source_doc.save()
 
+        if crate_code:
+            # TODO: Reset Crate child tables here
+            pass
+            
         frappe.db.commit()
+
+        unverified_filters = [
+            [filter_field, '=', code],
+            ['verified', '=', 0],
+            ['received', '=', 1]
+        ]
+
+        if transit_required:
+            unverified_filters.append(['transited', '=', 1])
+            
+        if crate_code:
+            unverified_filters.append(['crate_closed', '=', 1])
+            
+        unverified_items = frappe.get_all(
+            'Item Crates',
+            filters=unverified_filters,
+            limit=1
+        )
         
-        return f'Receiving successful for {code}'
+        verification_required = len(unverified_items) > 0
+        
+        return f'Receiving successful for {code}', verification_required
         
     except Exception as e:
         frappe.db.rollback()

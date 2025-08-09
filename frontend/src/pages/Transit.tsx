@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useLoaderData } from 'react-router';
+import { useLoaderData, Link } from 'react-router';
 import { FaArrowLeft, FaPlus } from 'react-icons/fa';
 import { ChevronDown, MapPin, Package, Tag } from 'lucide-react';
 import { getTransitListView } from '../../utils/api';
@@ -133,9 +133,9 @@ function TransitList() {
       {/* Header */}
       <div className='bg-white border-b border-gray-200 px-4 py-4'>
         <div className='flex items-center justify-between mb-4'>
-          <a href={`/pick_stream/`} className='text-gray-600 hover:text-gray-800'>
+          <Link to={`/pick_stream/`} className='text-gray-600 hover:text-gray-800'>
             <FaArrowLeft size={20} />
-          </a>
+          </Link>
         </div>
         
         {/* Title */}

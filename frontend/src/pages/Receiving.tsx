@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useLoaderData } from 'react-router';
+import { useLoaderData, useNavigate, Link } from 'react-router';
 import { FaArrowLeft, FaPlus } from 'react-icons/fa';
 import { ChevronDown, MapPin, Package, Tag, Scan } from 'lucide-react';
 import { getReceivingListView } from '../../utils/api';
@@ -36,6 +36,7 @@ export async function receivingLoader() {
 
 function ReceivingList() {
   const { receivingList, user } = useLoaderData() as { receivingList: ReceivingListType; user: string };
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'crates' | 'identifiers'>('crates');
   const [locationFilter, setLocationFilter] = useState('');
   const [scanInput, setScanInput] = useState('');
@@ -98,11 +99,16 @@ function ReceivingList() {
         from_warehouse: scannedItem.source_warehouse
       };
       
-      await frappeClient.get('pick_stream.api.submit_receiving_request', params);
+      const response = await frappeClient.get('pick_stream.api.submit_receiving_request', params);
       
       setReceivedItems(prev => [scannedItem, ...prev]);
       toast.success(`${isCrate ? 'Crate' : 'Identifier'} ${code} has been successfully received.`);
       setScanInput('');
+
+   
+      if (response.message.data[1] === true && response.message.status === 200) {
+        navigate(`/pick_stream/verification/${isCrate ? 'crate' : 'item'}/${code}`);
+      }
     } catch (err: any) {
       if (err.httpStatus === 404) {
         toast.error("Something went wrong. Please try again.");
@@ -123,9 +129,9 @@ function ReceivingList() {
       {/* Header */}
       <div className='bg-white border-b border-gray-200 px-4 py-4'>
         <div className='flex items-center justify-between mb-4'>
-          <a href={`/pick_stream/`} className='text-gray-600 hover:text-gray-800'>
+          <Link to={`/pick_stream/`} className='text-gray-600 hover:text-gray-800'>
             <FaArrowLeft size={20} />
-          </a>
+          </Link>
         </div>
         
         {/* Title */}

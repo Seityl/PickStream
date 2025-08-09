@@ -1,4 +1,5 @@
-from typing import Dict
+import json
+from typing import List, Dict, Any, Tuple
 
 import frappe
 from frappe.utils.nestedset import get_descendants_of
@@ -288,3 +289,27 @@ def get_workflow_details(target_warehouse:str=None):
         }))
 
     return result[0] if target_warehouse else result
+
+def parse_codes(codes: Any) -> List[str]:
+    if isinstance(codes, str):
+        try:
+            parsed_codes = json.loads(codes)
+            if isinstance(parsed_codes, list):
+                return [str(code) for code in parsed_codes]
+            else:
+                return [str(parsed_codes)]
+        except (json.JSONDecodeError, TypeError):
+            return [str(codes)]
+    
+    elif isinstance(codes, list):
+        return [str(code) for code in codes]
+    
+    else:
+        return [str(codes)]
+
+def check_transit_required(picking_warehouse_stores, from_warehouse, to_warehouse) -> bool:
+    """Returns true if specified store doesn't match store mapped to picking location"""
+    source_warehouse_store = picking_warehouse_stores.get(from_warehouse)
+    if source_warehouse_store is None:
+        return True
+    return source_warehouse_store != to_warehouse
