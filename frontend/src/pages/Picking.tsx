@@ -7,7 +7,7 @@ import {
   useLocation,
   redirect
 } from 'react-router';
-import { FaArrowLeft } from 'react-icons/fa6';
+import { FaArrowLeft, FaBarcode, FaBox, FaEllipsisH, FaTimes } from 'react-icons/fa';
 import { getPickingViewItem } from '../../utils/api';
 import { frappeClient } from '../../utils/client';
 import { getCurrentUser } from '../../utils/auth';
@@ -133,7 +133,7 @@ function Picking() {
   }, [searchParams]);
 
   // Skip item
-  const skipItem = useCallback(async (closeCrate: boolean): Promise<void> => {
+  const skipItem = useCallback(async (): Promise<void> => {
     setIsLoading(true);
     try {
       const user = await getCurrentUser();
@@ -145,7 +145,6 @@ function Picking() {
         item_group: itemGroup,
         scanned_qty: 0,
         skipped: true,
-        closed_crate: closeCrate,
       };
 
       await frappeClient.get('pick_stream.api.submit_scan_details', params);
@@ -159,14 +158,14 @@ function Picking() {
   }, [materialRequest, sourceItem?.item_code, itemGroup, closeModal, navigate, location]);
 
   // Validate barcode
-  const validateBarcode = useCallback(async (): Promise<void> => {
-    if (!itembarcode) return;
+  const validateBarcode = useCallback(async (itemCode: string, barcode: string): Promise<void> => {
+    if (!barcode) return;
     
     setIsLoading(true);
     try {
       const params = {
-        item_code: sourceItem?.item_code,
-        barcode: itembarcode
+        item_code: itemCode,
+        barcode: barcode
       };
 
       const response = await frappeClient.get('pick_stream.api.validate_item_against_barcode', params);
@@ -177,14 +176,16 @@ function Picking() {
       }
     } catch (err: any) {
       handleError(err);
+      // Re-throw the error so the modal can handle it properly
+      throw err;
     } finally {
       setIsLoading(false);
     }
-  }, [itembarcode, sourceItem?.item_code]);
+  }, []);
 
   // Submit scan
   const submitScan = useCallback(async (options: SubmitScanOptions): Promise<void> => {
-    const { scannedQuantity = 0, itemType, crates, closeCrate } = options;
+    const { scannedQuantity = 0, itemType, crates } = options;
     
     setIsLoading(true);
     try {
@@ -197,7 +198,6 @@ function Picking() {
         item_group: itemGroup,
         scanned_qty: scannedQuantity,
         skipped: false,
-        closed_crate: closeCrate,
         as_box: false,
         as_other: false,
       };
@@ -216,7 +216,7 @@ function Picking() {
       const response = await frappeClient.get('pick_stream.api.submit_scan_details', params);
       
       if (response.message.data.complete && (itemType !== "box" && itemType !== "other")) {
-        navigate(`/pick_stream/material-requests/`);
+        navigate(`/pick_stream/material-requests/${materialRequest}`);
         return;
       }
 
@@ -236,80 +236,121 @@ function Picking() {
   }, [materialRequest, sourceItem?.item_code, itemGroup, crateCode, closeModal, navigate, location]);
 
   return (
-    <main className="relative w-full flex flex-col pb-10">
-      <header className='flex flex-row items-center px-4 py-6 bg-[#171717] text-white relative'>
-        <button onClick={() => navigate(`/pick_stream/material-requests/${materialRequest}`)}>
-          <FaArrowLeft size={24}/>
+    <main className="relative w-full flex flex-col bg-gray-50">
+      {/* Header */}
+      <header className='flex flex-row items-center px-4 py-4 bg-white shadow-sm border-b border-gray-200'>
+        <button 
+          onClick={() => navigate(`/pick_stream/material-requests/${materialRequest}`)}
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+        >
+          <FaArrowLeft size={20} className="text-gray-700"/>
         </button>
 
-        <p className='mx-auto text-xl font-semibold'>{sourceItem?.to_warehouse}</p>
+        <div className="flex-1 text-center">
+          <h1 className='text-lg font-semibold text-gray-900'>{sourceItem?.to_warehouse}</h1>
+          <p className='text-sm text-gray-500 mt-1'>
+            Item {sourceItem?.idx} of {sourceItem?.item_count}
+          </p>
+        </div>
       </header>
 
-      <div className="px-4 mt-10">
+      <div className="flex-1 px-4 py-6">
         {/* Modals */}
         {activeModal === "skip" && 
           <SkipItemModal 
-            skipItem={skipItem} 
+            skipItem={skipItem}
             closeModal={closeModal} 
             isLoading={isLoading}
+            itemCode={sourceItem?.item_code || ''} 
+            itemDescription={sourceItem?.description}
           />
         }
         
         {activeModal === "scan" && (
           <>
-            {!hasCrateCode ? (
-              <>
-                <div className="modal-backdrop" onClick={closeModal}></div>
-                <div className="modal">
-                  <div className="flex flex-col items-center modal-content">
-                    <p>Scan Crate</p>
+{!hasCrateCode ? (
+  <>
+    {/* Blurred backdrop */}
+    <div 
+      className="fixed inset-0 z-40" 
+      onClick={closeModal}
+      style={{
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        backgroundColor: 'rgba(0, 0, 0, 0.3)'
+      }}
+    ></div>
+    
+    {/* Modal container */}
+    <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl p-6 w-full max-w-sm mx-auto shadow-2xl border border-gray-200">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Scan Crate</h3>
+          <button 
+            onClick={closeModal} 
+            className="p-1 hover:bg-gray-100 rounded transition-colors"
+          >
+            <FaTimes className="text-gray-500" />
+          </button>
+        </div>
 
-                    <div className="input-container w-full">
-                      <input
-                        className="input-field mb-0 w-full"
-                        name="crate_code"
-                        id="crate_code"
-                        type="text"
-                        placeholder="Crate Code"
-                        value={crateCode || ''}
-                        onChange={(e) => setCrateCode(e.target.value)}
-                      />
-                    </div>
+        <div className="mb-4">
+          <label htmlFor="crate_code" className="block text-sm font-medium text-gray-700 mb-2">
+            Crate Code
+          </label>
+          <input
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none placeholder-gray-500"
+            name="crate_code"
+            id="crate_code"
+            type="text"
+            placeholder="Enter crate code"
+            value={crateCode || ''}
+            onChange={(e) => setCrateCode(e.target.value)}
+          />
+        </div>
 
-                    <button 
-                      className="modal-btn" 
-                      type="submit" 
-                      onClick={() => crateCode && validateCrate(crateCode)}
-                      disabled={isLoading}
-                    >
-                      {isLoading ? 'Checking Availability...' : 'Select Crate'}
-                    </button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <ScanItemModal 
-                itemCode={sourceItem?.item_code || ''} 
-                crateCode={crateCode || ''}
-                requestedQuantity={sourceItem?.requested_qty || ''}
-                itemDescription={sourceItem?.description || ''}
-                itemBarcode={itembarcode}
-                setItemBarcode={setItemBarcode}
-                validateBarcode={validateBarcode}
-                uom={sourceItem?.uom || ''}
-                validateCrate={validateCrate}
-                itemIsValidated={itemIsValidated}
-                submitScan={submitScan} 
-                closeModal={closeModal} 
-                isLoading={isLoading}
-              />
-            )}
+        <button 
+          className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+          type="submit" 
+          onClick={() => crateCode && validateCrate(crateCode)}
+          disabled={isLoading || !crateCode}
+        >
+          {isLoading ? (
+            <div className="flex items-center space-x-2">
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            </div>
+          ) : (
+            'Select Crate'
+          )}
+        </button>
+      </div>
+    </div>
+  </>
+) : (
+  <ScanItemModal 
+    itemCode={sourceItem?.item_code || ''} 
+    crateCode={crateCode || ''}
+    requestedQuantity={sourceItem?.requested_qty || ''}
+    itemDescription={sourceItem?.description || ''}
+    itemBarcode={itembarcode}
+    setItemBarcode={setItemBarcode}
+    validateBarcode={validateBarcode}
+    uom={sourceItem?.uom || ''}
+    validateCrate={validateCrate}
+    itemIsValidated={itemIsValidated}
+    submitScan={submitScan} 
+    closeModal={closeModal} 
+    isLoading={isLoading}
+  />
+)}
           </>
         )}
         
         {activeModal === "scanBox" && 
           <ScanAsBoxModal 
-            itemCode={sourceItem?.item_code} 
+            itemCode={sourceItem?.item_code}
+            requestedQuantity={sourceItem?.requested_qty || ''}
+            uom={sourceItem?.uom || ''}
             itemDescription={sourceItem?.description}
             itemBarcode={itembarcode}
             setItemBarcode={setItemBarcode}
@@ -323,7 +364,9 @@ function Picking() {
         
         {activeModal === "scanOther" && 
           <ScanAsOtherModal 
-            itemCode={sourceItem?.item_code} 
+            itemCode={sourceItem?.item_code || ''} 
+            requestedQuantity={sourceItem?.requested_qty || ''}
+            uom={sourceItem?.uom || ''}
             itemDescription={sourceItem?.description}
             itemBarcode={itembarcode}
             setItemBarcode={setItemBarcode}
@@ -335,117 +378,96 @@ function Picking() {
           />
         }
         
-        <div className='text-center w-full mb-6'><p>{sourceItem?.idx} out of {sourceItem?.item_count}</p></div>
-        
-        <form className="">
-          <div className="input-container">
-            <label htmlFor="item_code">
-              Item Code
-              <input
-                className="input-field"
-                name="item_code"
-                id="item_code"
-                type="text"
-                placeholder="Item Code"
-                disabled
-                value={sourceItem?.item_code || ''}
-              />
-            </label>
-          </div>
-
-          <div className="input-container">
-            <label htmlFor="item_description">
-              Description
-              <input
-                className="input-field"
-                name="item_description"
-                id="item_description"
-                type="text"
-                placeholder="Item Description"
-                disabled
-                value={sourceItem?.description || ''}
-              />
-            </label>
-          </div>
+        {/* Item Details Card */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Item Details</h2>
           
-          <div className='flex flex-row justify-between items-center'>
-            <div className="input-container w-[48%]">
-              <label htmlFor="item_uom">
-                UOM
-                <input
-                  className="input-field"
-                  name="item_uom"
-                  id="item_uom"
-                  type="text"
-                  placeholder="Unit of Measure"
-                  disabled
-                  value={sourceItem?.uom || ''}
-                />
-              </label>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Item Code</label>
+              <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900">
+                {sourceItem?.item_code || '-'}
+              </div>
             </div>
 
-            <div className="input-container w-[48%]">
-              <label htmlFor="requested_quantity">
-                Qty
-                <input
-                  className="input-field"
-                  name="requested_quantity"
-                  id="requested_quantity"
-                  type="text"
-                  placeholder="Requested Quantity"
-                  disabled
-                  value={sourceItem?.requested_qty || ''}
-                />
-              </label>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 leading-relaxed">
+                {sourceItem?.description || '-'}
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900">
+                  {sourceItem?.uom || '-'}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 font-medium">
+                  {sourceItem?.requested_qty || '-'}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">From Warehouse</label>
+              <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900">
+                {sourceItem?.from_warehouse || '-'}
+              </div>
             </div>
           </div>
+        </div>
 
-          <div className="input-container">
-            <label htmlFor="from_warehouse">
-              From Warehouse
-              <input
-                className="input-field"
-                name="from_warehouse"
-                id="from_warehouse"
-                type="text"
-                placeholder="From Warehouse"
-                disabled
-                value={sourceItem?.from_warehouse || ''}
-              />
-            </label>
-          </div>
+        {/* Action Buttons */}
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Actions</h3>
           
-          <div className='grid grid-cols-2 grid-rows-2 gap-x-2 gap-y-1'>
+          {/* Primary Actions */}
+          <div className="grid grid-cols-2 gap-4">
             <button 
-              className="modal-btn bg-red-700" 
-              type="button" 
-              onClick={() => setActiveModal("skip")}
-            >
-              Skip
-            </button>
-            <button 
-              className="modal-btn" 
+              className="flex items-center justify-center space-x-3 bg-blue-600 text-white py-6 px-6 rounded-xl font-semibold text-lg hover:bg-blue-700 active:scale-[0.98] transition-all shadow-md" 
               type="button" 
               onClick={() => setActiveModal("scan")}
             >
-              Scan
+              <FaBarcode size={24} />
+              <span>Scan Item</span>
             </button>
+            
             <button 
-              className="modal-btn" 
+              className="flex items-center justify-center space-x-3 bg-red-600 text-white py-6 px-6 rounded-xl font-semibold text-lg hover:bg-red-700 active:scale-[0.98] transition-all shadow-md" 
+              type="button" 
+              onClick={() => setActiveModal("skip")}
+            >
+              <FaTimes size={24} />
+              <span>Skip Item</span>
+            </button>
+          </div>
+
+          {/* Secondary Actions */}
+          <div className="grid grid-cols-2 gap-4">
+            <button 
+              className="flex items-center justify-center space-x-3 bg-gray-600 text-white py-5 px-6 rounded-xl font-semibold hover:bg-gray-700 active:scale-[0.98] transition-all shadow-md" 
               type="button" 
               onClick={() => setActiveModal("scanBox")}
             >
-              Box
+              <FaBox size={22} />
+              <span>Scan as Box</span>
             </button>
+            
             <button 
-              className="modal-btn" 
+              className="flex items-center justify-center space-x-3 bg-gray-600 text-white py-5 px-6 rounded-xl font-semibold hover:bg-gray-700 active:scale-[0.98] transition-all shadow-md" 
               type="button" 
               onClick={() => setActiveModal("scanOther")}
             >
-              Other
+              <FaEllipsisH size={22} />
+              <span>Scan as Other</span>
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </main>
   );

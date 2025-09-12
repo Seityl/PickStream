@@ -20,6 +20,16 @@ function validateResponse(response: any) {
   return response.message.data;
 }
 
+export async function getUserWorkflowAccess(user: string) {
+  try {
+    const searchParams = { user };
+    const response = await frappeClient.get('pick_stream.api.get_user_workflow_access', searchParams);
+    return validateResponse(response);
+  } catch (err) {
+    return handleApiError(err);
+  }
+}
+
 export async function getMaterialRequests(user: string) {
   try {
     const searchParams = { user };

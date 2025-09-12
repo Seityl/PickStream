@@ -1,6 +1,6 @@
 import frappe
 from typing import Any, Dict
-from pick_stream import api_utils, core 
+from pick_stream import api_utils, core, utils 
 
 # API Docs: \\storage\it\IT_Vault\IT_Team_Vault\06_Projects\Current Projects\Pick Stream\Documentation\API 
 
@@ -147,6 +147,33 @@ def submit_receiving_request(
     return api_utils.generate_response(200, None, receiving_request)
 
 # 
+# Tools Endpoints
+# 
+
+@frappe.whitelist()
+@api_utils.handler(methods=['GET'])
+def get_item_identifier_list(user, limit:int=20) -> Dict:
+    """Returns list of associated details"""
+    identifier_list = core.get_identifier_list(user, limit)
+    return api_utils.generate_response(200, None, identifier_list)
+
+
+@frappe.whitelist()
+@api_utils.handler(methods=['GET'])
+def get_item_identifier_details(item_identifier:str) -> Dict:
+    """Returns associated details of item identifier"""
+    identifier_details = core.get_identifier_details(item_identifier)
+    return api_utils.generate_response(200, None, identifier_details)
+
+
+@frappe.whitelist()
+@api_utils.handler(methods=['GET'])
+def get_user_active_crate_details(user:str) -> Dict:
+    crate_details = core.get_user_crate_details(user)
+    return api_utils.generate_response(200, None, crate_details)
+
+
+# 
 # Utility Endpoints
 # 
 
@@ -159,10 +186,23 @@ def get_user_active_crate(user:str) -> Dict:
 
 @frappe.whitelist()
 @api_utils.handler(methods=['GET'])
-def get_user_active_crate_details(user:str) -> Dict:
-    crate_details = core.get_user_crate_details(user)
-    return api_utils.generate_response(200, None, crate_details)
+def get_user_workflow_access(user:str) -> Dict:
+    workflow_access = utils.get_user_workflow_access(user)
+    return api_utils.generate_response(200, None, workflow_access)
 
+
+@frappe.whitelist()
+@api_utils.handler(methods=['GET'])
+def get_user_profile(user:str) -> Dict:
+    user_profile = utils.get_user_profile(user)
+    return api_utils.generate_response(200, None, user_profile)
+
+
+@frappe.whitelist()
+@api_utils.handler(methods=['GET'])
+def get_user_notifications(user:str) -> Dict:
+    user_notifications = utils.get_user_notifications(user)
+    return api_utils.generate_response(200, None, user_notifications)
 
 
 @frappe.whitelist()
@@ -176,7 +216,7 @@ def validate_item_against_barcode(item_code:str, barcode:str) -> Dict:
 @frappe.whitelist()
 @api_utils.handler(methods=['GET'])
 def validate_crate(crate_code:str, user:str) -> Dict:
-    if core.check_crate_availability(crate_code, user):
+    if utils.check_crate_availability(crate_code, user):
         return api_utils.generate_response(200, None, True)
     return api_utils.generate_response(200, None, False)
 
@@ -184,8 +224,8 @@ def validate_crate(crate_code:str, user:str) -> Dict:
 # TODO: Add docs
 @frappe.whitelist()
 @api_utils.handler(methods=['POST'])
-def submit_close_crate_request(crate_code:str) -> Dict:
-    close_crate = core.close_crate(crate_code, commit=True)
+def submit_close_crate_request(crate_code:str, items:Any=[]) -> Dict:
+    close_crate = core.close_crate(crate_code, items=items, commit=True)
     return api_utils.generate_response(200, None, close_crate)
 
 
@@ -245,28 +285,6 @@ def get_crate_details(
 #=====# -------- #=================================================================#
 
 #=====# TOOLS #=================================================================#
-
-@frappe.whitelist()
-@api_utils.handler(methods=['GET'])
-def get_item_identifier_list(user, limit:int=20) -> Dict:
-    """Returns list of associated details"""
-    identifier_list = core.get_identifier_list(user, limit)
-    return api_utils.generate_response(200, None, identifier_list)
-
-
-@frappe.whitelist()
-@api_utils.handler(methods=['GET'])
-def get_item_identifier_details(item_identifier:str) -> Dict:
-    """Returns associated details of item identifier"""
-    identifier_details = core.get_identifier_details(item_identifier)
-    return api_utils.generate_response(200, None, identifier_details)
-
-
-
-
-
-
-
 
 #=====# ----- #=================================================================#
 

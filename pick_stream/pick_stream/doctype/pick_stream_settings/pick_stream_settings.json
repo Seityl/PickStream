@@ -23,7 +23,17 @@
   "item_types",
   "workflow_settings_tab",
   "workflow_settings_section",
-  "workflow_settings"
+  "workflow_settings",
+  "privileged_access_role_section",
+  "privileged_user_role",
+  "section_break_uyji",
+  "picking_user_role",
+  "column_break_ikoe",
+  "verification_user_role",
+  "column_break_wgxy",
+  "transit_user_role",
+  "column_break_vcpy",
+  "receiving_user_role"
  ],
  "fields": [
   {
@@ -119,6 +129,7 @@
   {
    "fieldname": "workflow_settings_section",
    "fieldtype": "Section Break",
+   "hide_border": 1,
    "label": "Workflow Settings"
   },
   {
@@ -137,14 +148,66 @@
   {
    "fieldname": "section_break_iqtn",
    "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "section_break_uyji",
+   "fieldtype": "Section Break",
+   "label": "Workflow Access Roles"
+  },
+  {
+   "fieldname": "verification_user_role",
+   "fieldtype": "Link",
+   "label": "Verification User Role",
+   "options": "Role"
+  },
+  {
+   "fieldname": "column_break_ikoe",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "transit_user_role",
+   "fieldtype": "Link",
+   "label": "Transit User Role",
+   "options": "Role"
+  },
+  {
+   "fieldname": "column_break_wgxy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "receiving_user_role",
+   "fieldtype": "Link",
+   "label": "Receiving User Role",
+   "options": "Role"
+  },
+  {
+   "fieldname": "privileged_access_role_section",
+   "fieldtype": "Section Break",
+   "label": "Privileged Access Role"
+  },
+  {
+   "fieldname": "privileged_user_role",
+   "fieldtype": "Link",
+   "label": "Privileged User Role",
+   "options": "Role"
+  },
+  {
+   "fieldname": "picking_user_role",
+   "fieldtype": "Link",
+   "label": "Picking User Role",
+   "options": "Role"
+  },
+  {
+   "fieldname": "column_break_vcpy",
+   "fieldtype": "Column Break"
   }
  ],
  "hide_toolbar": 1,
  "in_create": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-06-02 14:04:11.189655",
- "modified_by": "Administrator",
+ "modified": "2025-08-10 17:37:31.077324",
+ "modified_by": "jeriel@jollysonline.com",
  "module": "Pick Stream",
  "name": "Pick Stream Settings",
  "owner": "Administrator",

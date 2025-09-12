@@ -1,10 +1,9 @@
 import React from 'react';
 import { AiFillProfile } from "react-icons/ai";
-import { FaArrowRight, FaCheckCircle, FaExclamationCircle, FaClock } from "react-icons/fa";
+import { FaArrowRight, FaCheckCircle, FaCircle } from "react-icons/fa";
 import { Link } from 'react-router';
 import { MatReqItem } from '../../types';
 
-// Use the actual type from your data structure
 type ItemGroupAvailability = Record<string, any> & {
   name?: string;
   available?: boolean;
@@ -13,40 +12,18 @@ type ItemGroupAvailability = Record<string, any> & {
 export default function MaterialRequestItem(props: MatReqItem) {
   const { name, target_warehouse, source_warehouse, status, item_group_availability } = props;
 
-  // Enhanced status configuration with icons and colors
   const statusConfig: Record<string, { color: string; bgColor: string; icon: React.ReactNode; textColor: string }> = {
     Open: {
       color: '#10B981', // Green-500
       bgColor: '#D1FAE5', // Green-100
       textColor: '#065F46', // Green-800
       icon: <FaCheckCircle className="w-3 h-3" />
-    },
-    Pending: {
-      color: '#F59E0B', // Amber-500
-      bgColor: '#FEF3C7', // Amber-100
-      textColor: '#92400E', // Amber-800
-      icon: <FaClock className="w-3 h-3" />
-    },
-    'In Progress': {
-      color: '#3B82F6', // Blue-500
-      bgColor: '#DBEAFE', // Blue-100
-      textColor: '#1E40AF', // Blue-800
-      icon: <FaClock className="w-3 h-3" />
-    },
-    Blocked: {
-      color: '#EF4444', // Red-500
-      bgColor: '#FEE2E2', // Red-100
-      textColor: '#991B1B', // Red-800
-      icon: <FaExclamationCircle className="w-3 h-3" />
     }
   };
 
-  const currentStatus = statusConfig[status] || statusConfig['Open'];
+  const currentStatus = statusConfig[status];
 
-  // Calculate availability summary with proper type checking
-  const availableCount = item_group_availability.filter((item: ItemGroupAvailability) => item.available === true).length;
-  const totalCount = item_group_availability.length;
-  const hasUnavailableItems = availableCount < totalCount;
+  const totalPicksNeeded = item_group_availability.length;
 
   return (
     <Link 
@@ -83,13 +60,9 @@ export default function MaterialRequestItem(props: MatReqItem) {
             </div>
           </div>
 
-          {/* Availability Summary Badge */}
-          <div className={`flex-shrink-0 ml-3 px-2.5 py-1 rounded-full text-xs font-medium ${
-            hasUnavailableItems 
-              ? 'bg-red-100 text-red-800' 
-              : 'bg-green-100 text-green-800'
-          }`}>
-            {availableCount}/{totalCount} Available
+          {/* Picks Needed Badge */}
+          <div className="flex-shrink-0 ml-3 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+            {totalPicksNeeded} Pick Lists
           </div>
         </div>
 
@@ -109,30 +82,21 @@ export default function MaterialRequestItem(props: MatReqItem) {
         {/* Item Groups Section */}
         {item_group_availability.length > 0 && (
           <div className="space-y-2">
-            <h4 className="text-sm font-medium text-gray-700 mb-2">
-              Item Groups ({item_group_availability.length})
-            </h4>
-            
-            {/* Show first 3 items, with expandable option for more */}
+            {/* Show first 3 pick lists */}
             <div className="space-y-1.5">
               {item_group_availability.slice(0, 3).map((item_group: ItemGroupAvailability, index: number) => (
                 <div 
                   key={index}
-                  className={`flex items-center space-x-2 p-2.5 rounded-lg text-sm transition-colors ${
-                    item_group.available 
-                      ? 'bg-green-50 border border-green-200' 
-                      : 'bg-red-50 border border-red-200'
-                  }`}
+                  className="flex items-center space-x-2 p-2.5 rounded-lg text-sm transition-colors bg-blue-50 border border-blue-200"
                 >
-                  {item_group.available ? (
-                    <FaCheckCircle className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
-                  ) : (
-                    <FaExclamationCircle className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />
-                  )}
-                  <span className={`font-medium truncate ${
-                    item_group.available ? 'text-green-800' : 'text-red-800'
-                  }`}>
-                    {item_group.name || 'Unknown Item'}
+                  <FaCircle className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                  <span className="font-medium truncate text-blue-800">
+                    {item_group.name}
+                  </span>
+                  
+                  {/* Status indicator */}
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium ml-auto flex-shrink-0 bg-blue-100 text-blue-700">
+                    To Pick
                   </span>
                 </div>
               ))}
@@ -140,17 +104,12 @@ export default function MaterialRequestItem(props: MatReqItem) {
               {/* Show remaining count if more than 3 items */}
               {item_group_availability.length > 3 && (
                 <div className="text-xs text-gray-500 px-2 py-1 text-center bg-gray-50 rounded-lg">
-                  +{item_group_availability.length - 3} more item groups
+                  +{item_group_availability.length - 3} more pick lists
                 </div>
               )}
             </div>
           </div>
         )}
-
-        {/* Hover indicator */}
-        <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-        </div>
       </div>
     </Link>
   );

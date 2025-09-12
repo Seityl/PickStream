@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router';
+import { useState, useCallback, useEffect } from 'react';
+import { FaTimes, FaBarcode, FaPlus, FaCheck, FaSpinner } from 'react-icons/fa';
 
 type CrateItem = {
   scanned_qty: number;
@@ -11,7 +11,6 @@ type SubmitScanOptions = {
   scannedQuantity: number;
   itemType: string;
   crates?: Array<{ scanned_qty: number; crate_code: string; uom: string }>;
-  closeCrate?: boolean;
 };
 
 type ScanItemModalProps = {
@@ -42,254 +41,368 @@ export default function ScanItemModal({
   validateCrate,
   itemIsValidated,
   submitScan,
-  closeModal
+  closeModal,
+  isLoading = false
 }: ScanItemModalProps) {
   const [scannedQuantity, setScannedQuantity] = useState<number>(0);
-  const [closeCrate, setCloseCrate] = useState(false);
-  const [input, setInput] = useState<string>('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [crates, setCrates] = useState<CrateItem[]>([{scanned_qty: scannedQuantity, crate_code: crateCode, uom: uom || 'EACH'}]);
-  const [isHidden, setIsHidden] = useState(true);
-  const navigate = useNavigate();
+  const [newCrateInput, setNewCrateInput] = useState<string>('');
+  const [isAddingCrate, setIsAddingCrate] = useState(false);
+  const [isValidatingCrate, setIsValidatingCrate] = useState(false);
+  const [isValidatingBarcode, setIsValidatingBarcode] = useState(false);
+  const [crates, setCrates] = useState<CrateItem[]>([{
+    scanned_qty: 0, 
+    crate_code: crateCode, 
+    uom: uom || 'EACH'
+  }]);
 
-  const addCrate = useCallback(() => {
-    setIsHidden(false);
-  }, []);
+  // Step management for better UX flow
+  const [currentStep, setCurrentStep] = useState<'scan_barcode' | 'enter_quantity' | 'add_crates'>('scan_barcode');
 
-  const addToTable = useCallback(async () => {
-    if (!input.trim()) {
-      return;
-    }
+  // Clear barcode when modal opens
+  useEffect(() => {
+    setItemBarcode('');
+  }, [setItemBarcode]);
+
+  const handleBarcodeChange = (value: string) => {
+    setItemBarcode(value);
+  }
+  const handleBarcodeValidation = useCallback(async () => {
+    if (!itemBarcode.trim()) return;
     
-    setIsLoading(true);
+    setIsValidatingBarcode(true);
+    
     try {
-      const crateIsValid = await validateCrate(input);
+      await validateBarcode(itemCode, itemBarcode);
+      // Only progress to next step if validation succeeds
+      setCurrentStep('enter_quantity');
+    } catch (error) {
+      console.error('Barcode validation failed:', error);
+      // Set user-friendly error message
+      // Don't change the step - stay on barcode scanning
+      // Optionally clear the barcode input to allow re-scanning
+      setItemBarcode('');
+    } finally {
+      setIsValidatingBarcode(false);
+    }
+  }, [validateBarcode, itemCode, itemBarcode, setItemBarcode]);
 
-      if (input !== crateCode && crateIsValid) {
-        setCrates((prevCrates) => [...prevCrates, {scanned_qty: 0, crate_code: input, uom: uom || 'EACH'}]);
-        setInput('');
-        setIsHidden(true);
+  const addNewCrate = useCallback(async () => {
+    if (!newCrateInput.trim()) return;
+    
+    setIsValidatingCrate(true);
+    try {
+      const crateIsValid = await validateCrate(newCrateInput);
+      
+      if (crateIsValid && !crates.some(c => c.crate_code === newCrateInput)) {
+        setCrates(prev => [...prev, {
+          scanned_qty: 0,
+          crate_code: newCrateInput,
+          uom: uom || 'EACH'
+        }]);
+        setNewCrateInput('');
+        setIsAddingCrate(false);
       }
     } catch (error) {
       console.error('Error validating crate:', error);
     } finally {
-      setIsLoading(false);
+      setIsValidatingCrate(false);
     }
-  }, [input, crateCode, validateCrate, uom]);
+  }, [newCrateInput, validateCrate, crates, uom]);
 
   const handleQuantityChange = useCallback((index: number, value: string) => {
-    const userInput = value;
-    const newCrates = [...crates];
-    
-    if (userInput === '' || !isNaN(Number(userInput))) {
-      newCrates[index].scanned_qty = userInput === '' ? 0 : Number(userInput);
+    const numValue = value === '' ? 0 : Number(value);
+    if (!isNaN(numValue) && numValue >= 0) {
+      const newCrates = [...crates];
+      newCrates[index].scanned_qty = numValue;
       setCrates(newCrates);
     }
   }, [crates]);
 
-  const handleSubmitScan = useCallback((options: {
-    scannedQuantity: number;
-    itemType: string;
-    crates?: CrateItem[];
-    closeCrate?: boolean;
-  }) => {
-    submitScan(options);
-  }, [submitScan]);
+  const handleSubmit = useCallback(() => {
+    if (crates.length > 1) {
+      submitScan({
+        scannedQuantity: 0,
+        crates: crates,
+        itemType: "crates"
+      });
+    } else {
+      submitScan({
+        scannedQuantity: scannedQuantity,
+        itemType: "crate"
+      });
+    }
+  }, [submitScan, crates, scannedQuantity]);
 
-  const handleVerifyBarcode = useCallback(() => {
-    validateBarcode(itemCode, itemBarcode);
-  }, [validateBarcode, itemCode, itemBarcode]);
+  const getTotalScanned = () => {
+    return crates.reduce((total, crate) => total + crate.scanned_qty, 0);
+  };
+
+  const isSubmitDisabled = () => {
+    if (crates.length > 1) {
+      return getTotalScanned() === 0;
+    }
+    return scannedQuantity === 0;
+  };
 
   return (
     <>
-    {!isHidden ? (
-      <>
-        <div className="modal-backdrop" onClick={() => setIsHidden(true)}></div>
-        <div className="modal" role="dialog" aria-modal="true">
-          <div className="flex flex-col items-center modal-content">
-            <p className=''>Scan Crate</p>
-
-            <div className="input-container w-full">
-              <input
-                className="input-field mb-0 w-full"
-                name="crate_code"
-                id="crate_code"
-                type="text"
-                placeholder="Crate Code"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                aria-label="Crate Code"
-              />
-            </div>
-
-            <button 
-              className="modal-btn" 
-              type="button" 
-              onClick={addToTable}
-              disabled={isLoading}
-              aria-busy={isLoading}
-            >
-              {!isLoading ? 'Select Crate' : 'Checking Availability...'}
-            </button>
-          </div> 
-        </div>
-      </>
-    ) : (
-      <>
-        <div className="modal-backdrop" onClick={closeModal}></div>
-        <div className="modal" role="dialog" aria-modal="true">
-          {itemIsValidated ? (
-            <div className="flex flex-col items-center modal-content">
-              <p className="mb-8 rounded-[6px] bg-[#e2e2e2] p-[6px]">
-                {itemCode} : {itemDescription}
-              </p>
-
-              <div className="input-container w-full">
-                <label htmlFor="requested_quantity">
-                  Requested Quantity 
-                  <input
-                    className="input-field mb-0"
-                    name="requested_quantity"
-                    id="requested_quantity"
-                    type="text"
-                    placeholder="Requested Quantity"
-                    value={requestedQuantity} 
-                    readOnly
-                    aria-readonly="true"
-                  />
-                </label>
+      {/* Blurred Backdrop */}
+      <div className="fixed inset-0 backdrop-blur-md z-40" onClick={closeModal}></div>
+      
+      {/* Modal with Solid Background */}
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-auto overflow-hidden border border-gray-200">
+        
+          {/* Header */}
+          <div className="bg-blue-50 px-6 py-4 border-b border-blue-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Scan Item</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  {itemCode} • Requested: {requestedQuantity} {uom}
+                </p>
               </div>
-              
-              {crates.length > 1 ? (
-                <>
-                  <table className="min-w-full border border-gray-300 border-collapse mb-4 table-fixed">
-                    <thead className="bg-gray-200">
-                      <tr>
-                        <th className="w-1/2 border border-gray-300 px-4 py-2 text-left">Crate</th>
-                        <th className="w-1/2 border border-gray-300 px-4 py-2 text-left">Qty</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {crates.map((crate, index) => (
-                        <tr key={crate.crate_code} className="hover:bg-gray-50">
-                          <td className="w-1/2 border border-gray-300 px-4 py-2">{crate.crate_code}</td>
-                          <td className="w-1/2 border border-gray-300 px-4 py-2">
-                            <div className="relative">
-                              <input
-                                className="bg-[#e2e2e2] p-2 rounded-md m-0 pr-12 w-full no-spinner"
-                                name={`crate_qty_${index}`}
-                                id={`crate_qty_${index}`}
-                                type="number"
-                                min={1}
-                                value={crate.scanned_qty}
-                                onChange={(e) => handleQuantityChange(index, e.target.value)}
-                                aria-label={`Quantity for crate ${crate.crate_code}`}
-                              />
-                              <span className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none text-sm">
-                                {crate.uom}
-                              </span>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  <div className='w-full flex flex-row gap-2'>
-                    <button 
-                      className="modal-btn" 
-                      type="button" 
-                      onClick={() => handleSubmitScan({scannedQuantity: 0, crates: crates, itemType: "crates", closeCrate: closeCrate})}
-                    >
-                      Submit Scan
-                    </button>
-
-                    <button className="modal-btn" type="button" onClick={addCrate}>
-                      Add Crate
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="input-container w-full">
-                    <label htmlFor="crate_code">
-                      Crate Code
-                      <input
-                        className="input-field mb-0"
-                        name="crate_code"
-                        id="crate_code"
-                        type="text"
-                        placeholder="Crate Code"
-                        value={crateCode} 
-                        readOnly
-                        aria-readonly="true"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="input-container w-full">
-                    <label htmlFor="scanned_quantity">
-                      Scanned Quantity
-                      <input
-                        className="input-field mb-0"
-                        name="scanned_quantity"
-                        id="scanned_quantity"
-                        type="number"
-                        placeholder="Scanned Quantity"
-                        value={scannedQuantity}
-                        min={1}
-                        onChange={(e) => setScannedQuantity(parseInt(e.target.value) || 0)}
-                        aria-label="Scanned Quantity"
-                      />
-                    </label>
-                  </div>
-
-                  <div className='w-full flex flex-row gap-2'>
-                    <button 
-                      className="modal-btn" 
-                      type="button" 
-                      onClick={() => handleSubmitScan({scannedQuantity: scannedQuantity, itemType: "crate", closeCrate: closeCrate})}
-                    >
-                      Submit Scan
-                    </button>
-
-                    <button className="modal-btn" type="button" onClick={addCrate}>
-                      Add Crate
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          ) : (   
-            <div className="flex flex-col items-center modal-content">
-              <p className="mb-8 rounded-[6px] bg-[#e2e2e2] p-[6px]">
-                {itemCode}
-              </p>
-
-              <div className="input-container w-full">
-                <label htmlFor="item_barcode">
-                  Scan Item 
-                  <input
-                    className="input-field mb-0"
-                    name="item_barcode"
-                    id="item_barcode"
-                    type="text"
-                    placeholder="Barcode"
-                    value={itemBarcode}
-                    onChange={(e) => setItemBarcode(e.target.value)}
-                    aria-label="Item Barcode"
-                  />
-                </label>
-              </div>
-
-              <button className="modal-btn" type="button" onClick={handleVerifyBarcode}>
-                Verify
+              <button 
+                onClick={closeModal}
+                className="p-2 hover:bg-blue-100 rounded-lg transition-colors"
+              >
+                <FaTimes className="text-gray-500" size={16} />
               </button>
             </div>
-          )}
+          </div>
+
+          {/* Progress Indicator */}
+          <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
+            <div className="flex items-center space-x-2">
+              <div className={`w-3 h-3 rounded-full ${currentStep === 'scan_barcode' ? 'bg-blue-500' : itemIsValidated ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+              <span className="text-xs text-gray-600">Scan Barcode</span>
+              <div className="flex-1 h-px bg-gray-300"></div>
+              <div className={`w-3 h-3 rounded-full ${currentStep === 'enter_quantity' || currentStep === 'add_crates' ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
+              <span className="text-xs text-gray-600">Enter Quantity</span>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="p-6 bg-white">
+            
+            {/* Step 1: Barcode Scanning */}
+            {!itemIsValidated && (
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
+                    <FaBarcode className="text-blue-600" size={24} />
+                  </div>
+                  <p className="text-gray-600 mb-2">
+                    Scan the barcode for this item
+                  </p>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+                    <p className="text-sm font-medium text-gray-900">{itemDescription}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label htmlFor="item_barcode" className="block text-sm font-medium text-gray-700">
+                    Item Barcode
+                  </label>
+                  <input
+                    id="item_barcode"
+                    type="text"
+                    placeholder="Scan barcode"
+                    value={itemBarcode}
+                    onChange={(e) => handleBarcodeChange(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-center font-mono"
+                    autoFocus
+                  />
+                </div>
+
+                <button 
+                  onClick={handleBarcodeValidation}
+                  disabled={!itemBarcode.trim() || isValidatingBarcode}
+                  className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
+                >
+                  {isValidatingBarcode ? (
+                    <>
+                      <FaSpinner className="animate-spin" size={16} />
+                      <span>Validating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FaCheck size={16} />
+                      <span>Verify Barcode</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Step 2: Quantity Entry */}
+            {itemIsValidated && (
+              <div className="space-y-6">
+                
+                {/* Item confirmation */}
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center space-x-2 text-green-800">
+                    <FaCheck className="text-green-600" size={16} />
+                    <span className="font-medium">Item Verified</span>
+                  </div>
+                  <p className="text-sm text-green-700 mt-1">{itemDescription}</p>
+                </div>
+
+                {/* Crate Management */}
+                {crates.length === 1 ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Crate Code
+                      </label>
+                      <input
+                        type="text"
+                        value={crateCode}
+                        readOnly
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg text-gray-600"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Scan Quantity
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="0"
+                          value={scannedQuantity || ''}
+                          onChange={(e) => setScannedQuantity(Number(e.target.value) || 0)}
+                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none pr-16"
+                          placeholder="0"
+                        />
+                        <span className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-500 text-sm">
+                          {uom}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium text-gray-900">Multiple Crates</h4>
+                      <span className="text-sm text-gray-600">
+                        Total: {getTotalScanned()} {uom}
+                      </span>
+                    </div>
+                    
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <table className="w-full">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Crate</th>
+                            <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Qty</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                          {crates.map((crate, index) => (
+                            <tr key={crate.crate_code} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-sm text-gray-900 font-mono">
+                                {crate.crate_code}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="relative">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={crate.scanned_qty || ''}
+                                    onChange={(e) => handleQuantityChange(index, e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none pr-12 text-sm"
+                                    placeholder="0"
+                                  />
+                                  <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 text-xs">
+                                    {crate.uom}
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Add Crate Section */}
+                {!isAddingCrate ? (
+                  <button
+                    onClick={() => setIsAddingCrate(true)}
+                    className="w-full border-2 border-dashed border-gray-300 rounded-lg py-4 text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors flex items-center justify-center space-x-2"
+                  >
+                    <FaPlus size={16} />
+                    <span>Add Another Crate</span>
+                  </button>
+                ) : (
+                  <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                    <h5 className="font-medium text-gray-900">Add Crate</h5>
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        placeholder="Scan crate code"
+                        value={newCrateInput}
+                        onChange={(e) => setNewCrateInput(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                      />
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={addNewCrate}
+                          disabled={!newCrateInput.trim() || isValidatingCrate}
+                          className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-1"
+                        >
+                          {isValidatingCrate ? (
+                            <>
+                              <FaSpinner className="animate-spin" size={14} />
+                              <span>Adding...</span>
+                            </>
+                          ) : (
+                            <>
+                              <FaPlus size={14} />
+                              <span>Add</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setIsAddingCrate(false);
+                            setNewCrateInput('');
+                          }}
+                          className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Submit Button */}
+                <button
+                  onClick={handleSubmit}
+                  disabled={isSubmitDisabled() || isLoading}
+                  className="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
+                >
+                  {isLoading ? (
+                    <>
+                      <FaSpinner className="animate-spin" size={16} />
+                      <span>Submitting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FaCheck size={16} />
+                      <span>Submit Scan</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-      </>
-    )}
+      </div>
     </>
   );
 }

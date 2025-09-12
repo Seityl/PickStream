@@ -32,9 +32,7 @@ required_apps = ['ERPNext']
 
 # include js in doctype views
 
-doctype_js = [{
-    'Material Request': 'public/js/custom_Material Request.js'
-}]
+doctype_js = {
     'Material Request': 'public/js/custom_Material Request.js'
 }
 

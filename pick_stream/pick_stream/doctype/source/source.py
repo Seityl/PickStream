@@ -27,7 +27,7 @@ class Source(Document):
         return all(item.scanned or item.skipped for item in self.items)
 
     def update_streams(self):
-        crates_status, crate_users = self.get_crates_status()
+        crates_status = self.get_crates_status()
 
         if not crates_status:
             return
@@ -42,19 +42,15 @@ class Source(Document):
                 'name'
             )
             
-            users = crate_users.get(crate_code, {})
-
             if not stream_name:
                 stream_name = pick_stream.core.create_stream(self, crate_code)
-                pick_stream.core.update_stream(self, stream_name, status, users)
 
             else:
-                pick_stream.core.update_stream(self, stream_name, status, users)
+                pick_stream.core.update_stream(self, stream_name, status)
 
     def get_crates_status(self):
         crates_status = frappe._dict()
         crate_items = frappe._dict()
-        crate_users = frappe._dict()
 
         for row in self.item_crates:
             if row.crate_code == None:
@@ -62,12 +58,6 @@ class Source(Document):
             
             if row.crate_code not in crate_items:
                 crate_items[row.crate_code] = []
-                crate_users[row.crate_code] = frappe._dict({
-                    'picking_user': '',
-                    'verifying_user': '',
-                    'transit_user': '',
-                    'receiving_user': ''
-                })
 
             crate_items[row.crate_code].append(row)
         frappe.log_error('item crates', frappe.as_json(crate_items, indent=2))
@@ -81,18 +71,6 @@ class Source(Document):
             verified_items = sum(1 for item in items if item.verified)
             transited_items = sum(1 for item in items if item.transited)
             received_items = sum(1 for item in items if item.received)
-
-            current_user = frappe.session.user
-            users = crate_users[crate_code]
-        
-            if closed_items == total_items and not users['picking_user']:
-                users['picking_user'] = current_user
-            elif verified_items == total_items and not users['verifying_user']:
-                users['verifying_user'] = current_user
-            elif transited_items == total_items and not users['transit_user']:
-                users['transit_user'] = current_user
-            elif received_items == total_items and not users['receiving_user']:
-                users['receiving_user'] = current_user
 
             if (received_items == total_items and 
                 (not workflow.verification_after_receiving or verified_items == total_items)):
@@ -143,43 +121,53 @@ class Source(Document):
                 except frappe.DoesNotExistError:
                     # If no stream doc exists, default to 'Picking' as the previous status
                     previous_status = 'Picking'
-            
-                for item in items:
-                    reset_values = {
-                        'crate_closed': 0,
-                        'verified': 0,
-                        'transited': 0,
-                        'received': 0
-                    }
-                    
-                    if previous_status == 'Waiting':
-                        reset_values['crate_closed'] = 1
 
-                    elif previous_status == 'Verified':
-                        reset_values['crate_closed'] = 1
+                frappe.log_error('previous_status', previous_status)
+
+                reset_values = {
+                    'crate_closed': 0,
+                    'verified': 0,
+                    'transited': 0,
+                    'received': 0
+                }
+                
+                if previous_status == 'Waiting':
+                    reset_values['crate_closed'] = 1
+
+                elif previous_status == 'Verified':
+                    reset_values['crate_closed'] = 1
+                    reset_values['verified'] = 1
+                    
+                elif previous_status == 'In Transit':
+                    reset_values['crate_closed'] = 1
+                    reset_values['transited'] = 1
+
+                    if workflow.transit_after_verification:
                         reset_values['verified'] = 1
                         
-                    elif previous_status == 'In Transit':
-                        reset_values['crate_closed'] = 1
+                elif previous_status == 'Received':
+                    reset_values['crate_closed'] = 1
+                    reset_values['received'] = 1
+
+                    if workflow.receiving_after_verification:
+                        reset_values['verified'] = 1
+                        
+                    if workflow.transit_required:
                         reset_values['transited'] = 1
-
-                        if workflow.transit_after_verification:
-                            reset_values['verified'] = 1
-                            
-                    elif previous_status == 'Received':
-                        reset_values['crate_closed'] = 1
-                        reset_values['received'] = 1
-
-                        if workflow.receiving_after_verification:
-                            reset_values['verified'] = 1
-                            
-                        if workflow.transit_required:
-                            reset_values['transited'] = 1
                         
                     # For 'Picking' stage, all remain 0
 
-                    frappe.db.set_value('Item Crates', item.name, reset_values)
-                    frappe.db.commit()
+                for item in items:
+                    frappe.log_error('item', frappe.as_json(item, indent=2))
+                    frappe.log_error('reset_values', frappe.as_json(reset_values, indent=2))
+
+                    # frappe.db.set_value('Item Crates', item.name, reset_values)
+                    # frappe.db.commit()
+
+                    for field, value in reset_values.items():
+                            setattr(item, field, value)
+
+                    frappe.log_error('item after update', frappe.as_json(item, indent=2))
 
                 crates_status[crate_code] = previous_status
 
@@ -212,7 +200,7 @@ class Source(Document):
                 pick_stream.core.close_crate(crate_code, commit=False)
                 crates_status[crate_code] = 'Waiting' # Update the status after closing
 
-        return crates_status, crate_users
+        return crates_status
     
     def validate_stock_qty(self):
         for row in self.items:

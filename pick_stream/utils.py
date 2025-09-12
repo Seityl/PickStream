@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Tuple
 
 import frappe
 from frappe.utils.nestedset import get_descendants_of
+from frappe.utils import now_datetime, time_diff_in_hours, get_datetime
 
 import pick_stream
 
@@ -226,7 +227,7 @@ def get_material_request_items_details(mr_name:str, user:str, selected_item_grou
     }, as_dict=True) or {}
 
 def get_workflow_details(target_warehouse:str=None):
-    """Will return all workflows if target warehouse is not passed (For Stock Managers)"""
+    """Will return all workflows if target warehouse is not passed (For privileged users)"""
     settings = pick_stream.utils.get_settings()
     active_workflows = [row for row in settings.workflow_settings if row.is_active]
 
@@ -290,6 +291,149 @@ def get_workflow_details(target_warehouse:str=None):
 
     return result[0] if target_warehouse else result
 
+def has_role(user:str, role:str) -> bool:
+    if frappe.db.exists('Has Role', {'parent': user, 'role': role}):
+        return True
+
+    return False
+    
+def get_user_workflow_access(user):
+    pick_stream.validations.validate_exists('User', user)
+    settings = get_settings()
+
+    privileged_role = settings.privileged_user_role
+    
+    has_privileged_access = has_role(user, privileged_role)
+    if has_privileged_access:
+        return {
+            'picking': True,
+            'transit': True,
+            'verification': True,
+            'receiving': True
+        }
+    
+    picking = settings.picking_user_role
+    verification = settings.verification_user_role
+    transit = settings.transit_user_role
+    receiving = settings.receiving_user_role
+    
+    workflow_access = {
+        'picking': has_role(user, picking),
+        'transit': has_role(user, transit),
+        'verification': has_role(user, verification),
+        'receiving': has_role(user, receiving)
+    }
+    
+    return workflow_access
+    
+def get_user_profile(user):
+    pick_stream.validations.validate_exists('User', user)
+    user_doc = frappe.get_doc('User', user)
+
+    employee_doc = None
+    if frappe.db.exists('Employee', {'user_id': user}):
+        employee_doc = frappe.get_doc('Employee', {'user_id': user})
+    
+    profile_data = {
+        'name': user_doc.name,
+        'email': user_doc.email,
+        'user_image': user_doc.user_image
+    }
+    
+    if employee_doc:
+        profile_data.update({
+            'full_name': employee_doc.employee_name or user_doc.full_name or user_doc.first_name,
+            'designation': employee_doc.designation,
+            'department': employee_doc.department,
+            'company': employee_doc.company,
+            'employee': employee_doc.name,
+            'branch': employee_doc.branch,
+            'phone': employee_doc.cell_number or user_doc.phone
+        })
+
+    else:
+        profile_data.update({
+            'full_name': user_doc.full_name or user_doc.first_name,
+            'phone': user_doc.phone,
+        })
+    
+    return profile_data
+
+def get_user_notifications(user):
+    pick_stream.validations.validate_exists('User', user)
+    notifications = []
+    
+    def clean_text(text, max_length=200):
+        if not text:
+            return ''
+        
+        cleaned = frappe.utils.strip_html_tags(text)
+        cleaned = " ".join(cleaned.split())
+        
+        if len(cleaned) > max_length:
+            return cleaned[:max_length].rsplit(' ', 1)[0] + "..."
+        
+        return cleaned
+    
+    notification_logs = frappe.get_all(
+        'Notification Log',
+        filters={
+            'for_user': user,
+            'read': ['in', [0, 1]]  # Get both read and unread
+        },
+        fields=[
+            'name', 'subject', 'email_content', 'document_type', 
+            'document_name', 'from_user', 'creation', 'read'
+        ],
+        order_by='creation desc',
+        limit=50
+    )
+    
+    for log in notification_logs:
+        notifications.append({
+            'id': log.name,
+            'title': clean_text(log.subject or 'Notification', 100),
+            'message': clean_text(log.email_content),
+            'document_type': log.document_type,
+            'document_name': log.document_name,
+            'from_user': log.from_user,
+            'creation': log.creation,
+            'read': bool(log.read),
+            'type': 'notification_log'
+        })
+    
+    # Get Assignment notifications
+    assignments = frappe.get_all(
+        'ToDo',
+        filters={
+            'allocated_to': user,
+            'status': ['in', ['Open', 'Closed']]
+        },
+        fields=[
+            'name', 'description', 'reference_type', 'reference_name', 
+            'assigned_by', 'creation', 'status'
+        ],
+        order_by='creation desc',
+        limit=20
+    )
+    
+    for assignment in assignments:
+        notifications.append({
+            'id': f'todo_{assignment.name}',
+            'title': clean_text(f"Task Assigned: {assignment.reference_type or 'General Task'}", 100),
+            'message': clean_text(assignment.description or 'You have been assigned a new task'),
+            'document_type': assignment.reference_type,
+            'document_name': assignment.reference_name,
+            'from_user': assignment.assigned_by,
+            'creation': assignment.creation,
+            'read': assignment.status == 'Closed',
+            'type': 'assignment'
+        })
+    
+    notifications.sort(key=lambda x: x.get('creation', ''), reverse=True)
+    
+    return notifications[:100]
+
 def parse_codes(codes: Any) -> List[str]:
     if isinstance(codes, str):
         try:
@@ -313,3 +457,64 @@ def check_transit_required(picking_warehouse_stores, from_warehouse, to_warehous
     if source_warehouse_store is None:
         return True
     return source_warehouse_store != to_warehouse
+
+# TODO: Get Picking User by checking item crates child table
+def check_crate_availability(crate_code: str, user: str, from_stream: bool = False) -> bool:
+    pick_stream.validations.validate_exists('Crate', crate_code)
+    if not from_stream: 
+        pick_stream.validations.validate_exists('User', user)
+        
+    crate_status = frappe.db.get_value('Crate', crate_code, 'status')
+    
+    if crate_status != 'Available':
+        crate_picking_user = get_crate_picking_user(crate_code)
+        if not crate_picking_user:
+            raise pick_stream.exceptions.SystemError((
+                f"Crate '{crate_code}' is not available and has no picking user. Contact IT."
+            ))
+        
+        if crate_status == 'Picking' and crate_picking_user != user:
+            raise pick_stream.exceptions.ValidationError((
+                f"Crate '{crate_code}' is already in use by {crate_picking_user}. "
+                "Contact IT if you believe this is an error."
+            ))
+
+        if crate_status == 'Picking' and crate_picking_user == user:
+            return True
+
+        return False
+    
+    return True
+
+def get_crate_picking_user(crate_code):
+    """Returns current picking user for crate"""
+    all_picking_users = frappe.get_all(
+        'Item Crates',
+        fields=['picking_user', 'crate_code', 'modified'],
+        filters=[
+            ['crate_code', '=', crate_code],
+            ['parenttype', '=', 'Source'], 
+            ['picking_user', 'is', 'set'],
+            ['crate_closed', '=', 0],
+            ['transited', '=', 0],
+            ['verified', '=', 0],
+            ['received', '=', 0]
+        ]
+    )
+    if not all_picking_users:
+        return None
+        
+    user_dict = {}
+    for record in all_picking_users:
+        key = (record['crate_code'], record['picking_user'])
+        if key not in user_dict or record['modified'] > user_dict[key]['modified']:
+            user_dict[key] = record
+    
+    # There should only be one picking user at a given time for a crate
+    # If multiple are found then close the crate to ensure forward correctedness
+    unique_records = list(user_dict.values())
+    if len(unique_records) > 1:
+        pick_stream.core.close_crate(crate_code, commit=True)
+    
+    most_recent_record = max(unique_records, key=lambda x: x['modified'])
+    return most_recent_record['picking_user']

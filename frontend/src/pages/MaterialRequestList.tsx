@@ -13,21 +13,8 @@ function MaterialRequestList() {
   // Handle loading state
   if (isLoading) {
     return (
-      <main className='min-h-screen bg-gray-50'>
-        <header className='flex flex-row items-center px-4 sm:px-6 py-4 bg-white border-b border-gray-200 sticky top-0 z-10'>
-          <div className="flex items-center w-full">
-            <div className="w-8 h-8 bg-gray-200 rounded-lg animate-pulse"></div>
-            <div className="mx-auto h-6 w-32 bg-gray-200 rounded animate-pulse"></div>
-          </div>
-        </header>
-        
-        <div className='flex items-center justify-center min-h-[60vh]'>
-          <div className='text-center'>
-            <div className='bg-white p-6 rounded-xl shadow-sm border border-gray-200'>
-              <FaSpinner className='animate-spin text-2xl text-blue-500 mx-auto mb-3' />
-            </div>
-          </div>
-        </div>
+      <main className='min-h-screen bg-gray-50 flex items-center justify-center'>
+          <FaSpinner className='animate-spin text-2xl text-blue-500 mx-auto mb-3' />
       </main>
     );
   }
@@ -120,17 +107,6 @@ function MaterialRequestList() {
                   </div>
                 ))}
               </div>
-
-              {/* Pagination placeholder */}
-              {materialRequests.length > 10 && (
-                <div className='mt-8 flex justify-center'>
-                  <div className='bg-white px-6 py-3 rounded-lg border border-gray-200 shadow-sm'>
-                    <p className='text-sm text-gray-600'>
-                      Showing {Math.min(materialRequests.length, 10)} of {materialRequests.length} requests
-                    </p>
-                  </div>
-                </div>
-              )}
             </div>
           </>
         ) : (

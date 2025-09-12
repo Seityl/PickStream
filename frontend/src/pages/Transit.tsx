@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useLoaderData, Link } from 'react-router';
-import { FaArrowLeft, FaPlus } from 'react-icons/fa';
+import { FaArrowLeft, FaPlus, FaSearch, FaTimes } from 'react-icons/fa';
 import { ChevronDown, MapPin, Package, Tag } from 'lucide-react';
 import { getTransitListView } from '../../utils/api';
 import { getCurrentUser } from '../../utils/auth';
 import CreateTransitModal from '../components/CreateTransitModal';
 import { frappeClient } from '../../utils/client';
-import {toast} from 'react-toastify';
+import { toast } from 'react-toastify';
 
 type Identifier = {
   identifier_code: string;
@@ -39,6 +39,7 @@ function TransitList() {
   const { transitList, user } = useLoaderData() as { transitList: TransitListType; user: string };
   const [isCreateModalOpen, setCreateModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'crates' | 'identifiers'>('crates');
+  const [searchTerm, setSearchTerm] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
 
   // Debug: Log the transit list data
@@ -49,6 +50,52 @@ function TransitList() {
   // Use real API data with fallback to empty arrays
   const effectiveCrates = transitList?.crate_details || [];
   const effectiveIdentifiers = transitList?.identifier_details || [];
+
+  // Memoized filter options for better performance
+  const filterOptions = useMemo(() => {
+    const currentItems = activeTab === 'crates' ? effectiveCrates : effectiveIdentifiers;
+    
+    if (!currentItems || currentItems.length === 0) {
+      return { locations: [] };
+    }
+    
+    const locations = Array.from(new Set([
+      ...currentItems.map(item => item?.source_warehouse).filter(Boolean),
+      ...currentItems.map(item => item?.target_warehouse).filter(Boolean)
+    ])).sort();
+
+    return { locations };
+  }, [activeTab, effectiveCrates, effectiveIdentifiers]);
+
+  // Enhanced filtering with search
+  const filteredItems = useMemo(() => {
+    const currentItems = activeTab === 'crates' ? effectiveCrates : effectiveIdentifiers;
+    
+    if (!currentItems || currentItems.length === 0) {
+      return [];
+    }
+    
+    return currentItems.filter(item => {
+      if (!item) return false;
+      
+      const code = 'crate_code' in item ? item.crate_code : item.identifier_code;
+      const sourceWarehouse = item.source_warehouse || '';
+      const targetWarehouse = item.target_warehouse || '';
+      
+      // Search filter
+      const matchesSearch = !searchTerm || 
+        (code && code.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        sourceWarehouse.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        targetWarehouse.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      // Location filter
+      const matchesLocation = !locationFilter ||
+        sourceWarehouse === locationFilter ||
+        targetWarehouse === locationFilter;
+      
+      return matchesSearch && matchesLocation;
+    });
+  }, [activeTab, effectiveCrates, effectiveIdentifiers, searchTerm, locationFilter]);
 
   async function submitTransitRequest(selectedItems: { crates: Crate[]; identifiers: Identifier[] }) {
     const { crates, identifiers } = selectedItems;
@@ -111,38 +158,56 @@ function TransitList() {
     }
   }
 
+  const clearAllFilters = () => {
+    setSearchTerm('');
+    setLocationFilter('');
+  };
 
-
-
-
+  const hasActiveFilters = searchTerm || locationFilter;
   const crateCount = effectiveCrates.length;
   const identifierCount = effectiveIdentifiers.length;
 
-  const currentItems = activeTab === 'crates' ? effectiveCrates : effectiveIdentifiers;
-  
-  const filteredItems = locationFilter 
-    ? currentItems.filter(item => 
-        item.source_warehouse.toLowerCase().includes(locationFilter.toLowerCase()) ||
-        item.target_warehouse.toLowerCase().includes(locationFilter.toLowerCase())
-      )
-    : currentItems;
-
-
   return (
-    <main className='min-h-screen bg-gray-50'>
+    <main className='bg-gray-50'>
       {/* Header */}
+      <header className='flex flex-row items-center px-4 py-4 bg-white shadow-sm border-b border-gray-200'>
+        <Link 
+          to={`/pick_stream/`}
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors mr-3"
+        >
+          <FaArrowLeft size={20} className="text-gray-700"/>
+        </Link>
+        <div className="flex-1">
+          <h1 className='text-lg font-semibold text-gray-900'>Transit Management</h1>
+          <p className='text-sm text-gray-500 mt-1'>
+            {crateCount + identifierCount} available for transit
+          </p>
+        </div>
+      </header>
       <div className='bg-white border-b border-gray-200 px-4 py-4'>
-        <div className='flex items-center justify-between mb-4'>
-          <Link to={`/pick_stream/`} className='text-gray-600 hover:text-gray-800'>
-            <FaArrowLeft size={20} />
-          </Link>
-        </div>
         
-        {/* Title */}
-        <div className='text-center mb-6'>
-          <h1 className='text-2xl font-bold text-gray-900'>TRANSIT</h1>
+        {/* Search Bar */}
+        <div className='mb-4'>
+          <div className='relative'>
+            <FaSearch className='absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400' size={16} />
+            <input
+              type='text'
+              placeholder='Search by code or warehouse...'
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className='w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className='absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600'
+              >
+                <FaTimes size={14} />
+              </button>
+            )}
+          </div>
         </div>
-        
+
         {/* Location Filter */}
         <div className='mb-4'>
           <div className='relative'>
@@ -153,7 +218,7 @@ function TransitList() {
               className='w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none'
             >
               <option value=''>Filter by location...</option>
-              {currentItems.length > 0 && Array.from(new Set([...currentItems.map(item => item.source_warehouse), ...currentItems.map(item => item.target_warehouse)])).map(location => (
+              {filterOptions.locations.map(location => (
                 <option key={location} value={location}>{location}</option>
               ))}
             </select>
@@ -164,10 +229,10 @@ function TransitList() {
         {/* Create Transit Button */}
         <button 
           onClick={() => setCreateModalOpen(true)}
-          className='w-full bg-gray-800 text-white py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-gray-700 transition-colors'
+          className='w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-sm'
         >
           <FaPlus size={14} />
-          Create Transit
+          Create New Transit
         </button>
       </div>
       
@@ -178,7 +243,7 @@ function TransitList() {
             onClick={() => setActiveTab('crates')}
             className={`flex items-center gap-2 px-4 py-3 font-medium border-b-2 transition-colors ${
               activeTab === 'crates'
-                ? 'border-gray-800 text-gray-800'
+                ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -189,7 +254,7 @@ function TransitList() {
             onClick={() => setActiveTab('identifiers')}
             className={`flex items-center gap-2 px-4 py-3 font-medium border-b-2 transition-colors ${
               activeTab === 'identifiers'
-                ? 'border-gray-800 text-gray-800'
+                ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -199,16 +264,27 @@ function TransitList() {
         </div>
       </div>
       
+      {/* Active Filters Summary */}
+      {hasActiveFilters && (
+        <div className='bg-blue-50 border-b border-blue-200 px-4 py-3'>
+          <div className='flex items-center justify-between'>
+            <div className='flex items-center gap-2 text-sm text-blue-700'>
+              {filteredItems.length} of {activeTab === 'crates' ? crateCount : identifierCount} {activeTab} shown
+            </div>
+            <button
+              onClick={clearAllFilters}
+              className='text-sm text-blue-600 hover:text-blue-800 transition-colors'
+            >
+              Clear filters
+            </button>
+          </div>
+        </div>
+      )}
+      
       {/* Content */}
       <div className='p-4'>
         {/* Section Header */}
         <div className='bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden'>
-          <div className='px-4 py-3 border-b border-gray-200'>
-            <h2 className='flex items-center gap-2 font-semibold text-gray-800'>
-              {activeTab === 'crates' ? <Package size={18} /> : <Tag size={18} />}
-              {activeTab === 'crates' ? `Crates (${filteredItems.length})` : `Identifiers (${filteredItems.length})`}
-            </h2>
-          </div>
           
           {/* Table */}
           {filteredItems.length > 0 ? (
@@ -216,7 +292,9 @@ function TransitList() {
               <table className='w-full'>
                 <thead className='bg-gray-50'>
                   <tr>
-                    <th className='px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>Code</th>
+                    <th className='px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
+                      {activeTab === 'crates' ? 'Crate Code' : 'Identifier Code'}
+                    </th>
                     <th className='px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>From</th>
                     <th className='px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>To</th>
                   </tr>
@@ -226,7 +304,7 @@ function TransitList() {
                     const isCrate = 'crate_code' in item;
                     const code = isCrate ? item.crate_code : item.identifier_code;
                     return (
-                      <tr key={code}>
+                      <tr key={code} className='hover:bg-gray-50 transition-colors'>
                         <td className='px-4 py-3 text-sm font-medium text-gray-900'>{code}</td>
                         <td className='px-4 py-3 text-sm text-gray-600'>{item.source_warehouse}</td>
                         <td className='px-4 py-3 text-sm text-gray-600'>{item.target_warehouse}</td>
@@ -237,12 +315,32 @@ function TransitList() {
               </table>
             </div>
           ) : (
-            <div className='px-4 py-8 text-center text-gray-500'>
-              No {activeTab} found{locationFilter && ' for the selected location'}.
+            <div className='px-4 py-12 text-center'>
+              <div className='text-gray-400 mb-3'>
+                {activeTab === 'crates' ? <Package size={48} className='mx-auto' /> : <Tag size={48} className='mx-auto' />}
+              </div>
+              <p className='text-gray-500 text-lg font-medium mb-2'>
+                No {activeTab} found
+              </p>
+              <p className='text-gray-400 text-sm'>
+                {hasActiveFilters 
+                  ? 'Try adjusting your search or filter criteria'
+                  : `No ${activeTab} are currently available for transit`
+                }
+              </p>
+              {hasActiveFilters && (
+                <button
+                  onClick={clearAllFilters}
+                  className='mt-3 text-blue-600 hover:text-blue-800 text-sm font-medium transition-colors'
+                >
+                  Clear all filters
+                </button>
+              )}
             </div>
           )}
         </div>
       </div>
+      
       <CreateTransitModal
         isOpen={isCreateModalOpen}
         onClose={() => setCreateModalOpen(false)}

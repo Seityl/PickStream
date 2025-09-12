@@ -9,7 +9,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider } from './context/AuthContext';
 import { RedirectIfLoggedIn } from './components/RedirectIfLoggedIn';
 import ProtectedLayout from './layouts/ProtectedLayout';
-import Home from './pages/Home';
+import Home, { homeLoader }  from './pages/Home';
 import Login from './pages/Login';
 import MaterialRequestList, { materialRequestLoader } from './pages/MaterialRequestList';
 import CrateReceiving, { crateReceivingLoader } from './pages/CrateReceiving';
@@ -43,7 +43,7 @@ const router = createBrowserRouter(createRoutesFromElements(
     } />
     <Route element={<ProtectedLayout />} errorElement={<ErrorPage />}>
       <Route element={<TabLayout/>}>
-        <Route path="" element={<Home />} />
+        <Route path="" element={<Home />} loader={homeLoader}/>
         <Route path="tools" element={<Tools/>}/>
         <Route path="profile" element={<Profile />} loader={profileLoader} />
         <Route path="notifications" element={<Notifications />} loader={notificationsLoader} />

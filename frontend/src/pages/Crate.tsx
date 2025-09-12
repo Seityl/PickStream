@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLoaderData } from 'react-router';
-import { FaArrowLeft } from 'react-icons/fa';
+import { FaArrowLeft, FaCheck, FaExclamationTriangle, FaTimes } from 'react-icons/fa';
 import { toast } from 'react-toastify';
-import { useAuth } from '../context/AuthContext';
 import { useCloseCrate } from '../../utils/customApiHooks';
 import { getUserCrateItemDetails } from '../../utils/api';
 import { getCurrentUser } from '../../utils/auth';
@@ -15,16 +14,98 @@ export async function crateLoader() {
   return await getUserCrateItemDetails();
 }
 
+interface CrateItem {
+  name: string;
+  item_code: string;
+  item_name: string;
+  uom: string;
+  requested_qty: number;
+  qty: number;
+  final_qty: number;
+}
+
+interface ConfirmationModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  discrepancies: CrateItem[];
+  totalItems: number;
+}
+
+function ConfirmationModal({ isOpen, onClose, onConfirm, discrepancies, totalItems }: ConfirmationModalProps) {
+  if (!isOpen) return null;
+
+  const hasDiscrepancies = discrepancies.length > 0;
+  return (
+    <>
+      <div className="fixed inset-0 backdrop-blur-md z-40" onClick={onClose}></div>
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-t-xl w-full max-w-md mx-auto max-h-[80vh] overflow-y-auto">
+          <div className="p-6">
+            <h3 className="text-xl font-semibold mb-4">Confirm Crate Closure</h3>
+            
+            {hasDiscrepancies ? (
+              <div className="mb-6">
+                <div className="flex items-center mb-3 text-amber-600">
+                  <FaExclamationTriangle className="mr-3 text-lg" />
+                  <span className="font-medium">Quantity Discrepancies Found</span>
+                </div>
+                <p className="text-gray-600 mb-4">
+                  {discrepancies.length} of {totalItems} items have quantity differences:
+                </p>
+                <div className="max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3 space-y-2">
+                  {discrepancies.map((item) => (
+                    <div key={item.name} className="text-sm">
+                      <div className="font-medium">{item.item_code}</div>
+                      <div className="text-gray-600">
+                        Requested: {item.requested_qty} → Final: {item.final_qty}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center mb-6 text-green-600">
+                <FaCheck className="mr-3 text-lg" />
+                <span>All quantities confirmed.</span>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <button
+                onClick={onConfirm}
+                className="w-full py-3 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+              >
+                {hasDiscrepancies ? 'Confirm with Discrepancies' : 'Confirm Closure'}
+              </button>
+              <button
+                onClick={onClose}
+                className="w-full py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function Crate() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const crateDetails = useLoaderData();
-  const [items, setItems] = useState<any[]>([]);
-
-  // Update items state when crateDetails changes
+  const crateDetails = useLoaderData() as any;
+  const [items, setItems] = useState<CrateItem[]>([]);
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  console.log(items)
   useEffect(() => {
     if (crateDetails?.items) {
-      setItems(crateDetails.items);
+      const enhancedItems = crateDetails.items.map((item: any) => ({
+        ...item,
+        requested_qty: item.requested_qty || item.qty,
+        final_qty: item.qty,
+      }));
+      setItems(enhancedItems);
     } else {
       setItems([]);
     }
@@ -32,11 +113,33 @@ function Crate() {
 
   const closeCrateMutation = useCloseCrate();
 
+  const getItemStatus = (item: CrateItem) => {
+    if (item.final_qty === item.requested_qty) return 'complete';
+    if (item.final_qty < item.requested_qty) return 'short';
+    if (item.final_qty > item.requested_qty) return 'over';
+    return 'pending';
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'complete': return <FaCheck className="text-green-600 text-sm" />;
+      case 'short': return <FaExclamationTriangle className="text-red-600 text-sm" />;
+      case 'over': return <FaExclamationTriangle className="text-amber-600 text-sm" />;
+      default: return <FaTimes className="text-gray-400 text-sm" />;
+    }
+  };
+
+  const updateQuantity = (index: number, newValue: number) => {
+    const newItems = [...items];
+    newItems[index].final_qty = Math.max(0, newValue);
+    setItems(newItems);
+  };
+
   async function closeCrate() {
     closeCrateMutation.mutate(
       {
         crate_code: crateDetails.crate_code,
-        // items: items.map(item => ({ ...item, qty: item.scanned_qty })),
+        items: items.map(item => ({ ...item, qty: item.final_qty })),
       },
       {
         onSuccess: () => {
@@ -44,27 +147,40 @@ function Crate() {
           navigate('/pick_stream/tools');
         },
         onError: (err) => {
+          // console.error(err);
           console.error(err);
-          toast.error('Failed to close crate');
+          toast.error((err as any).message.error.error_message);
         },
       }
     );
   }
 
-
+  const handleConfirmClose = () => {
+    setShowConfirmation(false);
+    closeCrate();
+  };
 
   if (!crateDetails || items.length === 0) {
     return (
-      <main className="min-h-screen flex flex-col">
-        <header className="flex flex-row items-center px-4 py-6 bg-[#171717] text-white relative">
-          <Link to="/pick_stream/tools">
-            <FaArrowLeft size={24} />
-          </Link>
-          <p className="mx-auto text-xl font-semibold">Crate</p>
-        </header>
-        <div className="flex-grow flex items-center justify-center">
+      <main className="flex flex-col bg-gray-50">
+        <div className="bg-white border-b border-gray-200">
+          <div className="max-w-4xl mx-auto">
+            <div className="flex items-center justify-between p-4">
+              <div className="flex items-center space-x-4">
+                <Link 
+                  to="/pick_stream/tools"
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <FaArrowLeft size={20} className="text-gray-600" />
+                </Link>
+                <h1 className="text-xl font-semibold text-gray-900">Active Crate</h1>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex-grow flex items-center justify-center p-6">
           <div className="text-center">
-            <p className="text-lg font-semibold">You currently have no active crates.</p>
+            <p className="text-lg font-semibold mb-2">You currently have no active crate.</p>
             <p className="text-sm text-gray-500">Go to a material request to start picking.</p>
           </div>
         </div>
@@ -72,70 +188,111 @@ function Crate() {
     );
   }
 
+  const discrepancies = items.filter(item => getItemStatus(item) !== 'complete');
+  const hasDiscrepancies = discrepancies.length > 0;
+
   return (
-    <main className="min-h-screen">
-      <header className="flex flex-row items-center px-4 py-6 bg-[#171717] text-white relative">
-        <Link to="/pick_stream/tools">
-          <FaArrowLeft size={24} />
-        </Link>
-        <p className="mx-auto text-xl font-semibold">{crateDetails?.crate_code}</p>
-      </header>
-      <div className="px-4 mt-10">
-        <p className="text-center mb-5">
-          From {crateDetails.from_warehouse} To {crateDetails.to_warehouse}
-        </p>
-        <p className="mb-5">Items</p>
-        <div className="w-full overflow-x-auto mb-20">
-          <table className="min-w-full table-auto border border-gray-300 border-collapse">
-            <thead className="bg-gray-200">
-              <tr>
-                <th className="border border-gray-300 px-4 py-2 text-left">Item</th>
-                <th className="border border-gray-300 px-4 py-2 text-left">UOM</th>
-                <th className="border border-gray-300 px-4 py-2 text-left">Qty</th>
-                <th className="border border-gray-300 px-4 py-2 text-left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item, index) => (
-                <tr key={item.name} className="hover:bg-gray-50">
-                  <td className="border border-gray-300 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap px-4 py-2">
-                    {item.item_code} {item.item_name}
-                  </td>
-                  <td className="border border-gray-300 px-4 py-2">{item.uom}</td>
-                  <td className="border border-gray-300 px-4 py-2">{item.scanned_qty}</td>
-                  <td className="border border-gray-300 px-4 py-2">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          const newItems = [...items];
-                          newItems[index].scanned_qty = Math.max(0, newItems[index].scanned_qty - 1);
-                          setItems(newItems);
-                        }}
-                        className="px-2 py-1 border border-gray-300 rounded hover:bg-gray-100"
-                      >
-                        −
-                      </button>
-                      <button
-                        onClick={() => {
-                          const newItems = [...items];
-                          newItems[index].scanned_qty += 1;
-                          setItems(newItems);
-                        }}
-                        className="px-2 py-1 border border-gray-300 rounded hover:bg-gray-100"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <main className="bg-gray-50">
+      {/* Header Section - Consistent with home page style */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center justify-between p-4">
+            <div className="flex items-center space-x-4">
+              <Link 
+                to="/pick_stream/tools"
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <FaArrowLeft size={20} className="text-gray-600" />
+              </Link>
+              <div className="flex items-center space-x-3">
+                <div>
+                  <h1 className="text-xl font-semibold text-gray-900">{crateDetails?.crate_code}</h1>
+                  <p className="text-sm text-gray-500">{crateDetails.from_warehouse} → {crateDetails.to_warehouse}</p>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <button className="modal-btn" onClick={closeCrate}>
-          Confirm and Close
+      </div>
+
+      <div className="p-4">
+
+        <div className="space-y-3 mb-6">
+          {items.map((item, index) => {
+            const status = getItemStatus(item);
+            return (
+              <div key={item.name} className="bg-white rounded-lg p-4 shadow-sm">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1 min-w-0 mr-3">
+                    <div className="font-medium text-base mb-1">{item.item_code}</div>
+                    <div className="text-sm text-gray-600 line-clamp-2 mb-1">{item.item_name}</div>
+                    <div className="text-xs text-gray-500 bg-gray-100 inline-block px-2 py-1 rounded">
+                      {item.uom}
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    {getStatusIcon(status)}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  <div className="text-center p-3 bg-gray-50 rounded-lg">
+                    <div className="text-xs text-gray-500 mb-1">Requested</div>
+                    <div className="font-semibold text-lg">{item.requested_qty}</div>
+                  </div>
+                  <div className="text-center p-3 bg-blue-50 rounded-lg">
+                    <div className="text-xs text-gray-500 mb-1">Scanned</div>
+                    <div className="font-semibold text-lg text-blue-700">{item.qty}</div>
+                  </div>
+                  <div className="text-center p-3 bg-green-50 rounded-lg">
+                    <div className="text-xs text-gray-500 mb-1">Final</div>
+                    <div className="font-semibold text-lg text-green-700">{item.final_qty}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => updateQuantity(index, item.final_qty - 1)}
+                    className="w-12 h-12 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 flex items-center justify-center text-xl font-semibold active:bg-gray-300"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    value={item.final_qty}
+                    onChange={(e) => updateQuantity(index, parseInt(e.target.value) || 0)}
+                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg text-center text-lg font-semibold focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                    min="0"
+                  />
+                  <button
+                    onClick={() => updateQuantity(index, item.final_qty + 1)}
+                    className="w-12 h-12 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 flex items-center justify-center text-xl font-semibold active:bg-gray-300"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="p-4">
+        <button 
+          className="w-full py-4 px-6 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors font-semibold text-lg"
+          onClick={() => setShowConfirmation(true)}
+        >
+          {hasDiscrepancies ? `Review & Close (${discrepancies.length})` : 'Confirm and Close'}
         </button>
       </div>
+
+      <ConfirmationModal
+        isOpen={showConfirmation}
+        onClose={() => setShowConfirmation(false)}
+        onConfirm={handleConfirmClose}
+        discrepancies={discrepancies}
+        totalItems={items.length}
+      />
     </main>
   );
 }
