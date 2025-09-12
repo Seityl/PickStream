@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { Eye, EyeOff, Mail, Lock, AlertCircle, LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-toastify';
+import logo from '../../public/logo.svg'
 
 // Type definitions
 interface FormErrors {
@@ -230,6 +231,7 @@ export default function Login(): React.JSX.Element {
           animate="show"
           className="text-center mb-8"
         >
+          <img src={logo} alt="Pick Stream Logo" className="h-32 w-auto mx-auto" />
           <h1 className="mt-4 text-2xl font-bold text-gray-900">Pick Stream</h1>
           <p className="mt-2 text-gray-600">Sign in to continue</p>
         </motion.div>

@@ -13,7 +13,7 @@ export default defineConfig({
     // reactRouter(),
     tailwindcss(),
     VitePWA({
-      includeAssets: ['./icons/favicon.ico', './icons/apple-touch-icon.png', './icons/mask-icon.svg'],
+      includeAssets: ['./icons/favicon.ico', './logo.svg',  './icons/apple-touch-icon.png', './icons/mask-icon.svg'],
       manifest: {
         name: "Pick Stream",
         short_name: "PickStream",
