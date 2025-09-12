@@ -7,7 +7,7 @@ app_description = 'A robust, efficient, and accurate module on top of ERPNext th
 app_email = 'jeriel@jollysonline.com'
 app_license = 'MIT'
 
-required_apps = ['ERPNext']
+required_apps = ['erpnext']
 
 # Includes in <head>
 # ------------------
@@ -32,9 +32,7 @@ required_apps = ['ERPNext']
 
 # include js in doctype views
 
-doctype_js = [{
-    'Material Request': 'public/js/custom_Material Request.js'
-}]
+doctype_js = {
     'Material Request': 'public/js/custom_Material Request.js'
 }
 
