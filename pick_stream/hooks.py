@@ -77,7 +77,7 @@ doctype_js = {
 # before_install = "pick_stream.install.before_install"
 # after_install = "pick_stream.install.after_install"
 
-after_migrate = 'pick_stream.install.after_install'
+after_migrate = 'pick_stream.migrate.after_migrate'
 
 # Uninstallation
 # ------------
