@@ -63,7 +63,7 @@ function MaterialRequestList() {
   }
 
   return (
-    <main className='min-h-screen bg-gray-50'>
+    <main className='bg-gray-50'>
       {/* Header */}
       <header className='bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm'>
         <div className='px-4 sm:px-6 py-4'>
@@ -126,11 +126,6 @@ function MaterialRequestList() {
                   You don't have any pending material requests right now. New requests will appear here as they're assigned to you.
                 </p>
 
-                <div className='bg-blue-50 p-4 rounded-lg border border-blue-200'>
-                  <p className='text-sm text-blue-700 font-medium'>
-                    💡 Tip: Check back regularly or enable notifications to stay on top of new requests
-                  </p>
-                </div>
               </div>
             </div>
           </div>
