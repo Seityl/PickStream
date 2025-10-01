@@ -280,7 +280,7 @@ def get_workflow_details(target_warehouse:str=None):
             'verification_branches': verification_branches,
             'verification_user_role': row.verification_user_role,
             'verification_after_receiving': row.verification_after_receiving,
-            'transit_required': row.transit_required,
+            # 'transit_required': row.transit_required,
             'transit_after_verification': row.transit_after_verification,
             'transit_user_role': row.transit_user_role,
             'transit_warehouse': row.transit_warehouse,

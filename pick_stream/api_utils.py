@@ -4,6 +4,7 @@ import traceback
 from bs4 import BeautifulSoup
 from typing import Optional, List, Dict, Union
 
+
 def generate_response(
     status: int,
     message: Union[str, Exception],
@@ -14,24 +15,20 @@ def generate_response(
         'status': status,
         'data': data if data is not None else []
     })
-
     frappe.response['http_status_code'] = status
-
     if message:
         if isinstance(message, Exception):
             error = frappe._dict({'error_type': str(type(message).__name__), 'error_message': str(message)})
             response.error = error
-
         else:
             sanitized_message = BeautifulSoup(message, 'html.parser').get_text()
             response.message = sanitized_message
-
     return response
+
 
 def exception_handler(e: Exception) -> None:
     exception_name = type(e).__name__
     tb = traceback.extract_tb(e.__traceback__)
-    
     location = 'Unknown location'
     for trace in reversed(tb):
         filename = trace.filename
@@ -40,17 +37,15 @@ def exception_handler(e: Exception) -> None:
             trimmed_path = 'pick_stream' + parts[2]
             location = f'{trimmed_path} in {trace.name}'
             break
-
     log_title = f'{exception_name} at {location}'
     frappe.log_error(title=log_title, message=frappe.get_traceback())
-
     status_code = getattr(e, 'http_status_code', 500)
     return generate_response(status_code, e)
+
 
 def handler(methods: List[str]):
     """Decorator to validate HTTP method and handle exceptions"""
     allowed_methods = set(methods)
-
     @wrapt.decorator
     def wrapper(wrapped, instance, args, kwargs):
         try:
@@ -59,5 +54,4 @@ def handler(methods: List[str]):
             return wrapped(*args, **kwargs)
         except Exception as e:
             return exception_handler(e)
-
     return wrapper

@@ -13,7 +13,7 @@ function MaterialRequestList() {
   // Handle loading state
   if (isLoading) {
     return (
-      <main className='min-h-screen bg-gray-50 flex items-center justify-center'>
+      <main className='flex items-center justify-center'>
           <FaSpinner className='animate-spin text-2xl text-blue-500 mx-auto mb-3' />
       </main>
     );
@@ -22,7 +22,7 @@ function MaterialRequestList() {
   // Handle error state
   if (!materialRequests) {
     return (
-      <main className='min-h-screen bg-gray-50'>
+      <main>
         <header className='flex flex-row items-center px-4 sm:px-6 py-4 bg-white border-b border-gray-200 sticky top-0 z-10'>
           <Link 
             to={`/pick_stream/`}
@@ -63,7 +63,7 @@ function MaterialRequestList() {
   }
 
   return (
-    <main className='bg-gray-50'>
+    <main>
       {/* Header */}
       <header className='bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm'>
         <div className='px-4 sm:px-6 py-4'>
