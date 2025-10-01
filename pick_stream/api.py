@@ -4,9 +4,8 @@ from pick_stream import api_utils, core, utils
 
 # API Docs: \\storage\it\IT_Vault\IT_Team_Vault\06_Projects\Current Projects\Pick Stream\Documentation\API 
 
-# 
+#------------------- 
 # Picking Endpoints
-# 
 
 @frappe.whitelist()
 @api_utils.handler(methods=['GET'])
