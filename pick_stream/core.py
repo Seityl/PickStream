@@ -2,7 +2,7 @@ import cups
 import json
 import html
 import tempfile
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 import frappe
 from frappe import _
@@ -157,7 +157,6 @@ def get_user_material_requests(user:str) -> List:
     pick_stream.validations.validate_exists('User', user)
     settings = pick_stream.utils.get_settings()
     user_branch = pick_stream.utils.get_user_branch(user)
-    # Get group before branch to throw error if warehouse_group_map is not configured in settings
     warehouse_group = pick_stream.utils.get_warehouse_group(user, user_branch, settings)
     default_branch = settings.warehouse_group_map[0].branch
     user_item_groups = pick_stream.utils.get_assigned_item_groups(user)
@@ -221,7 +220,8 @@ def get_user_material_requests(user:str) -> List:
         availability = pick_stream.utils.get_mr_available_item_groups_for_user(
             mr_name,
             user,
-            child_warehouses
+            child_warehouses,
+            user_item_groups
         )
         if availability is None:
             continue
@@ -363,9 +363,9 @@ def get_relevant_source_item(source_name: str) -> dict:
     
     return out
 
-def get_user_crate(user: str) -> str:
+
+def get_user_crate(user: str) -> Optional[str]:
     pick_stream.validations.validate_exists('User', user)
-    
     all_crates  = frappe.get_all(
         'Item Crates',
         fields=['crate_code'],
@@ -380,28 +380,23 @@ def get_user_crate(user: str) -> str:
         ],
         distinct=True
     )
-
     crate_dict = {}
     for crate in all_crates:
         crate_code = crate['crate_code']
         if crate_code not in crate_dict or crate['modified'] > crate_dict[crate_code]['modified']:
             crate_dict[crate_code] = crate
-    
     matching_crates = list(crate_dict.values())
-
     if len(matching_crates) > 1:
         matching_crates.sort(key=lambda x: x['modified'])
         crates_to_close = matching_crates[:-1]
         most_recent_crate = matching_crates[-1]['crate_code']
-        
         for crate_data in crates_to_close:
             crate_code = crate_data['crate_code']
             close_crate(crate_code, commit=True)
             frappe.log_error('close_crate(crate_code, commit=True)')
-
         return most_recent_crate
-    
     return matching_crates[0]['crate_code'] if matching_crates else ''
+
     
 def source_is_complete(source_name: str) -> bool:
     doc = frappe.get_doc('Source', source_name)

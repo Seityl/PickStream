@@ -19,7 +19,7 @@ def get_user_branch(user:str) -> str:
         raise pick_stream.exceptions.DoesNotExistError(f"Employee for user '{user}' does not exist. Contact HR.")
     branch = frappe.db.get_value('Employee', {'user_id': user}, ['branch'])
     if not branch:
-        raise pick_stream.exceptions.ValidationError(f"Employee branch for user '{user}' is not set. Contact HR.")
+        raise pick_stream.exceptions.ValidationError(f"Branch for user '{user}' is not set. Contact HR.")
     return branch
 
 
@@ -35,16 +35,16 @@ def get_warehouse_group(user:str, user_branch:str, settings:Dict=None) -> str:
         if mapping.branch == user_branch:
             return mapping.warehouse
     raise pick_stream.exceptions.ValidationError(
-        f"Employee branch '{user_branch}' for user '{user}' not mapped to a warehouse. Contact IT. "
+        f"Employee branch '{user_branch}' for user '{user}' not mapped to a warehouse. Contact IT."
     )
 
 
-def get_child_warehouses(parent_warehouse:str) -> list:
+def get_child_warehouses(parent_warehouse:str) -> List:
     """Get all descendant warehouses of specified parent"""
     return get_descendants_of('Warehouse', parent_warehouse)
 
 
-def get_assigned_item_groups(user:str) -> list:
+def get_assigned_item_groups(user:str) -> List:
     """Get item groups assigned to a user through User Group relationships."""
     user_item_groups = frappe.get_all(
         'User Group',
@@ -68,9 +68,10 @@ def get_assigned_item_groups(user:str) -> list:
     return user_item_groups
 
 
-def get_mr_item_groups_for_user(mr_name:str, user:str) -> list:
+def get_mr_item_groups_for_user(mr_name:str, user:str, user_item_groups:List=[]) -> List:
     try:
-        user_item_groups = get_assigned_item_groups(user)
+        if not user_item_groups:
+            user_item_groups = get_assigned_item_groups(user)
         mr_groups = frappe.get_all(
             'Material Request Item',
             filters = {'parent': mr_name, 'item_group': ['in', user_item_groups]},
@@ -87,33 +88,14 @@ def get_mr_item_groups_for_user(mr_name:str, user:str) -> list:
 def get_mr_available_item_groups_for_user(
     mr_name:str,
     user:str,
-    child_warehouses:list
-) -> list:
+    child_warehouses:List,
+    user_item_groups:List = []
+) -> List:
     """Returns item groups which are available or incomplete for material request"""
     out = []
-    user_item_groups = get_mr_item_groups_for_user(mr_name, user)
+    user_item_groups = get_mr_item_groups_for_user(mr_name, user, user_item_groups)
     for item_group in user_item_groups:
-        error = frappe.db.sql(
-            """
-                SELECT *
-                FROM `tabMaterial Request Item` mri
-                INNER JOIN `tabItem` item ON mri.item_code = item.name
-                INNER JOIN `tabBin` bin ON mri.item_code = bin.item_code
-                WHERE mri.parent = %(mr_name)s
-                AND item.item_group = %(item_group)s
-                AND bin.actual_qty >= 1
-                AND bin.warehouse IN %(child_warehouses)s
-                AND (mri.stock_qty > COALESCE(mri.ordered_qty, 0))
-                LIMIT 1
-            """,
-            {
-                'mr_name': mr_name,
-                'item_group': item_group,
-                'child_warehouses': tuple(child_warehouses)
-            },
-            as_dict=True
-        )
-        frappe.log_error(item_group, frappe.as_json(error, indent=2))
+        # If completed Source (Pick List) exists, mark group unavailable
         if frappe.db.exists('Source', {
             'item_group': item_group, 
             'material_request': mr_name,
@@ -121,6 +103,7 @@ def get_mr_available_item_groups_for_user(
         }):
             out.append(frappe._dict({'name': item_group, 'available': False, 'reason': 'Completed'}))
             continue
+        # If no stock exists under warehouse group, mark group unavailable
         if not bool(frappe.db.sql(
             """
                 SELECT 1
@@ -143,6 +126,7 @@ def get_mr_available_item_groups_for_user(
         )):
             out.append(frappe._dict({'name': item_group, 'available': False, 'reason': 'No Available Stock'}))
             continue
+        # Mark group available if stock exists, and previous (if applicable) Source hasn't been completed
         out.append(frappe._dict({'name': item_group, 'available': True}))
     return out         
 

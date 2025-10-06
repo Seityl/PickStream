@@ -1,49 +1,45 @@
 import { Link } from 'react-router';
-import { FaFileAlt, FaBoxOpen, FaBarcode, FaSearch, FaCube, FaClipboardList } from "react-icons/fa";
+import { FaBoxOpen, FaBarcode, FaSearch, FaClipboardList, FaBox } from "react-icons/fa";
 import { MdInventory } from "react-icons/md";
 
 export default function Tool() {
   const toolItems = [
     { 
-      path: '/pick_stream/tools/identifier-lookup', 
-      label: 'Identifier Lookup', 
+      path: '/pick_stream/tools/identifier-lookup',
+      label: 'Identifier Lookup',
       icon: FaSearch,
-      description: 'Search and manage item identifiers',
+      description: 'Search and manage item identifiers'
     },
     { 
-      path: '/pick_stream/tools/crate', 
+      path: '/pick_stream/tools/active-crate', 
       label: 'Active Crate', 
       icon: FaBoxOpen,
-      description: 'Manage and track active crate',
+      description: 'Manage and track active crate'
     },
-    // { 
-    //   path: '/pick_stream/tools/barcode-scanner', 
-    //   label: 'Barcode Scanner', 
-    //   icon: FaBarcode,
-    //   description: 'Scan barcodes for quick identification',
-    //   category: 'Scanner'
-    // },
-    // { 
-    //   path: '/pick_stream/tools/inventory-check', 
-    //   label: 'Inventory Check', 
-    //   icon: MdInventory,
-    //   description: 'Quick inventory level verification',
-    //   category: 'Inventory'
-    // },
-    // { 
-    //   path: '/pick_stream/tools/batch-operations', 
-    //   label: 'Batch Operations', 
-    //   icon: FaCube,
-    //   description: 'Process multiple items at once',
-    //   category: 'Operations'
-    // },
-    // { 
-    //   path: '/pick_stream/tools/audit-log', 
-    //   label: 'Audit Log', 
-    //   icon: FaClipboardList,
-    //   description: 'View recent activity and changes',
-    //   category: 'Reporting'
-    // }
+    { 
+      path: '/pick_stream/tools/crate-check', 
+      label: 'Crate Check', 
+      icon: FaBox,
+      description: 'Scan and check crate details'
+    },
+    { 
+      path: '/pick_stream/tools/barcode-scanner', 
+      label: 'Barcode Scanner', 
+      icon: FaBarcode,
+      description: 'Scan barcodes for quick identification'
+    },
+    { 
+      path: '/pick_stream/tools/inventory-check', 
+      label: 'Inventory Check', 
+      icon: MdInventory,
+      description: 'Quick inventory level verification'
+    },
+    { 
+      path: '/pick_stream/tools/audit-log', 
+      label: 'Audit Log', 
+      icon: FaClipboardList,
+      description: 'View recent activity'
+    }
   ];
 
   return (

@@ -2,7 +2,9 @@ import frappe
 from typing import Any, Dict
 from pick_stream import api_utils, core, utils 
 
+
 # API Docs: \\storage\it\IT_Vault\IT_Team_Vault\06_Projects\Current Projects\Pick Stream\Documentation\API 
+
 
 #------------------- 
 # Picking Endpoints
@@ -16,15 +18,29 @@ def get_material_request_list_view(user:str) -> Dict:
 
 @frappe.whitelist()
 @api_utils.handler(methods=['GET'])
-def get_material_request_available_item_groups_view(user:str, mr_name:str) -> Dict:
-    view_details = core.get_material_request_item_groups_view_details(mr_name, user)
+def get_material_request_available_item_groups_view(
+        user:str,
+        mr_name:str
+    ) -> Dict:
+    view_details = core.get_material_request_item_groups_view_details(
+        mr_name,
+        user
+    )
     return api_utils.generate_response(200, None, view_details)
 
 
 @frappe.whitelist()
 @api_utils.handler(methods=['GET'])
-def get_material_request_picking_view(user:str, mr_name:str, item_group:str) -> Dict:
-    view_details = core.get_material_request_picking_view_details(mr_name, user, item_group)
+def get_material_request_picking_view(
+        user:str, 
+        mr_name:str,
+        item_group:str
+    ) -> Dict:
+    view_details = core.get_material_request_picking_view_details(
+        mr_name,
+        user,
+        item_group
+    )
     return api_utils.generate_response(200, None, view_details)
 
 
@@ -145,9 +161,17 @@ def submit_receiving_request(
     )
     return api_utils.generate_response(200, None, receiving_request)
 
-# 
+
+#------------------- 
 # Tools Endpoints
-# 
+
+@frappe.whitelist()
+@api_utils.handler(methods=['GET'])
+def get_crate_check(crate_code:str) -> Dict:
+    """Returns details of specified crate"""
+    identifier_list = core.get_identifier_list(user, limit)
+    return api_utils.generate_response(200, None, identifier_list)
+
 
 @frappe.whitelist()
 @api_utils.handler(methods=['GET'])
