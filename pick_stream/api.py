@@ -172,9 +172,8 @@ def get_user_active_crate_details(user:str) -> Dict:
     return api_utils.generate_response(200, None, crate_details)
 
 
-# 
+#------------------- 
 # Utility Endpoints
-# 
 
 @frappe.whitelist()
 @api_utils.handler(methods=['GET'])

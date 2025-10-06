@@ -1,5 +1,5 @@
 import json
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional
 
 import frappe
 from frappe.utils.nestedset import get_descendants_of
@@ -7,41 +7,42 @@ from frappe.utils import now_datetime, time_diff_in_hours, get_datetime
 
 import pick_stream
 
+
 def get_settings() -> Dict:
     """Returns cached Pick Stream Settings document"""
     return frappe.get_cached_doc('Pick Stream Settings')
 
+
 def get_user_branch(user:str) -> str:
     """Returns employee branch based on user"""
     if not frappe.db.exists('Employee', {'user_id': user}):
-        raise pick_stream.exceptions.DoesNotExistError(f"Employee for user '{user}' does not exist. Contact HR Department.")
-
+        raise pick_stream.exceptions.DoesNotExistError(f"Employee for user '{user}' does not exist. Contact HR.")
     branch = frappe.db.get_value('Employee', {'user_id': user}, ['branch'])
     if not branch:
-        raise pick_stream.exceptions.ValidationError(f"Employee branch for user '{user}' is not set. Contact HR Department.")
+        raise pick_stream.exceptions.ValidationError(f"Employee branch for user '{user}' is not set. Contact HR.")
     return branch
+
 
 def get_warehouse_group(user:str, user_branch:str, settings:Dict=None) -> str:
     """Returns warehouse group defined in settings based on user's branch"""
     if not settings:
         settings = get_settings()
-
     if not settings.warehouse_group_map:
         raise pick_stream.exceptions.ValidationError(
             f'No warehouse group mappings configured. Contact IT.'
         )
-    
     for mapping in settings.warehouse_group_map:
         if mapping.branch == user_branch:
             return mapping.warehouse
-    
     raise pick_stream.exceptions.ValidationError(
         f"Employee branch '{user_branch}' for user '{user}' not mapped to a warehouse. Contact IT. "
     )
 
+
 def get_child_warehouses(parent_warehouse:str) -> list:
     """Get all descendant warehouses of specified parent"""
     return get_descendants_of('Warehouse', parent_warehouse)
+
 
 def get_assigned_item_groups(user:str) -> list:
     """Get item groups assigned to a user through User Group relationships."""
@@ -62,11 +63,10 @@ def get_assigned_item_groups(user:str) -> list:
         pluck='name',
         distinct=True
     )
-
     if not user_item_groups:
         raise pick_stream.exceptions.ValidationError(f"User '{user}' is not assigned to any item group. Contact Supervisor.")
-
     return user_item_groups
+
 
 def get_mr_item_groups_for_user(mr_name:str, user:str) -> list:
     try:
@@ -80,26 +80,40 @@ def get_mr_item_groups_for_user(mr_name:str, user:str) -> list:
         for mr_group in mr_groups:
             pick_stream.validations.validate_user_assigned_to_item_group(user, mr_group)
         return mr_groups
-
     except Exception as e:
         raise pick_stream.exceptions.ValidationError(f'Error getting item groups for user: {e}') 
+        
         
 def get_mr_available_item_groups_for_user(
     mr_name:str,
     user:str,
-    child_warehouses:list=None
+    child_warehouses:list
 ) -> list:
     """Returns item groups which are available or incomplete for material request"""
-    pick_stream.validations.validate_user_assigned_to_mr(mr_name, user)
     out = []
     user_item_groups = get_mr_item_groups_for_user(mr_name, user)
-
-    if not child_warehouses:
-        user_branch = pick_stream.utils.get_user_branch(user)
-        warehouse_group = pick_stream.utils.get_warehouse_group(user, user_branch)
-        child_warehouses = get_child_warehouses(warehouse_group)
-
     for item_group in user_item_groups:
+        error = frappe.db.sql(
+            """
+                SELECT *
+                FROM `tabMaterial Request Item` mri
+                INNER JOIN `tabItem` item ON mri.item_code = item.name
+                INNER JOIN `tabBin` bin ON mri.item_code = bin.item_code
+                WHERE mri.parent = %(mr_name)s
+                AND item.item_group = %(item_group)s
+                AND bin.actual_qty >= 1
+                AND bin.warehouse IN %(child_warehouses)s
+                AND (mri.stock_qty > COALESCE(mri.ordered_qty, 0))
+                LIMIT 1
+            """,
+            {
+                'mr_name': mr_name,
+                'item_group': item_group,
+                'child_warehouses': tuple(child_warehouses)
+            },
+            as_dict=True
+        )
+        frappe.log_error(item_group, frappe.as_json(error, indent=2))
         if frappe.db.exists('Source', {
             'item_group': item_group, 
             'material_request': mr_name,
@@ -107,7 +121,6 @@ def get_mr_available_item_groups_for_user(
         }):
             out.append(frappe._dict({'name': item_group, 'available': False, 'reason': 'Completed'}))
             continue
-            
         if not bool(frappe.db.sql(
             """
                 SELECT 1
@@ -115,25 +128,24 @@ def get_mr_available_item_groups_for_user(
                 INNER JOIN `tabItem` item ON mri.item_code = item.name
                 INNER JOIN `tabBin` bin ON mri.item_code = bin.item_code
                 WHERE mri.parent = %(mr_name)s
-                AND item.item_group IN %(user_item_groups)s
+                AND item.item_group = %(item_group)s
                 AND bin.actual_qty >= 1
                 AND bin.warehouse IN %(child_warehouses)s
                 AND (mri.stock_qty > COALESCE(mri.ordered_qty, 0))
                 LIMIT 1
             """,
             {
-                "mr_name": mr_name,
-                "user_item_groups": tuple(user_item_groups),
-                "child_warehouses": tuple(child_warehouses)
+                'mr_name': mr_name,
+                'item_group': item_group,
+                'child_warehouses': tuple(child_warehouses)
             },
             as_dict=False
         )):
             out.append(frappe._dict({'name': item_group, 'available': False, 'reason': 'No Available Stock'}))
             continue
-
         out.append(frappe._dict({'name': item_group, 'available': True}))
-
     return out         
+
 
 def check_source_exists(mr_name:str, item_group:str) -> bool:
     if frappe.db.exists('Source', {
@@ -143,18 +155,23 @@ def check_source_exists(mr_name:str, item_group:str) -> bool:
         return True
     return False
 
-def get_source_name(mr_name:str, item_group:str) -> str:
+
+def get_source_name(mr_name:str, item_group:str) ->  Optional[str]:
     return frappe.db.get_value('Source', {
         'material_request': mr_name,
         'item_group': item_group
-    }, 'name') or ''
+    }, 'name')
 
-def get_material_request_item_group_item_quantity(mr_name: str, item_group: str, user: str) -> dict:
-    if not check_source_exists(mr_name, item_group):
+
+def get_material_request_item_group_item_quantity(
+        mr_name: str,
+        item_group: str,
+        child_warehouses:str
+    ) -> Dict:
+    source_name = get_source_name(mr_name, item_group) 
+    if not source_name:
+        # Base off material request if source hasn't already been created
         out = frappe._dict({'completed': 0})
-        user_branch = pick_stream.utils.get_user_branch(user)
-        warehouse_group = pick_stream.utils.get_warehouse_group(user, user_branch)
-        child_warehouses = get_child_warehouses(warehouse_group)
         out.total = frappe.db.sql(
             """
             SELECT 
@@ -174,29 +191,29 @@ def get_material_request_item_group_item_quantity(mr_name: str, item_group: str,
             as_dict=True
         )[0].total or 0
         return out
-    
-    source_name = get_source_name(mr_name, item_group)
-    result = frappe.db.sql(
-        """
-        SELECT 
-            SUM(CASE WHEN (si.scanned = 1 OR si.skipped = 1) THEN 1 ELSE 0 END) as completed,
-            COUNT(*) as total
-        FROM `tabSource Item` si
-        WHERE 
-            si.parent = %(source_name)s
-            AND si.item_group = %(item_group)s
-        """,
-        {
-            'source_name': source_name,
-            'item_group': item_group
-        },
-        as_dict=True
-    )[0]
-    
-    return frappe._dict({
-        'completed': result.completed or 0,
-        'total': result.total or 0,
-    })
+    else:
+        # Base off source if available
+        result = frappe.db.sql(
+            """
+            SELECT 
+                SUM(CASE WHEN (si.scanned = 1 OR si.skipped = 1) THEN 1 ELSE 0 END) as completed,
+                COUNT(*) as total
+            FROM `tabSource Item` si
+            WHERE 
+                si.parent = %(source_name)s
+                AND si.item_group = %(item_group)s
+            """,
+            {
+                'source_name': source_name,
+                'item_group': item_group
+            },
+            as_dict=True
+        )[0]
+        return frappe._dict({
+            'completed': result.completed or 0,
+            'total': result.total or 0,
+        })
+
 
 def get_material_request_items_details(mr_name:str, user:str, selected_item_group:str) -> dict:
     pick_stream.validations.validate_exists('User', user)
@@ -291,41 +308,33 @@ def get_workflow_details(target_warehouse:str=None):
 
     return result[0] if target_warehouse else result
 
+
 def has_role(user:str, role:str) -> bool:
+    """Return True if user has the specified role, False otherwise."""
     if frappe.db.exists('Has Role', {'parent': user, 'role': role}):
         return True
-
     return False
     
+
 def get_user_workflow_access(user):
+    """Returns workflow access of the specified user."""
     pick_stream.validations.validate_exists('User', user)
     settings = get_settings()
-
-    privileged_role = settings.privileged_user_role
-    
-    has_privileged_access = has_role(user, privileged_role)
-    if has_privileged_access:
+    if has_role(user, settings.privileged_user_role):
         return {
-            'picking': True,
-            'transit': True,
             'verification': True,
-            'receiving': True
+            'receiving': True,
+            'picking': True,
+            'transit': True
         }
-    
-    picking = settings.picking_user_role
-    verification = settings.verification_user_role
-    transit = settings.transit_user_role
-    receiving = settings.receiving_user_role
-    
-    workflow_access = {
-        'picking': has_role(user, picking),
-        'transit': has_role(user, transit),
-        'verification': has_role(user, verification),
-        'receiving': has_role(user, receiving)
+    return {
+        'verification': has_role(user, settings.verification_user_role),
+        'receiving': has_role(user, settings.receiving_user_role),
+        'picking': has_role(user, settings.picking_user_role),
+        'transit': has_role(user, settings.transit_user_role)
     }
     
-    return workflow_access
-    
+
 def get_user_profile(user):
     pick_stream.validations.validate_exists('User', user)
     user_doc = frappe.get_doc('User', user)

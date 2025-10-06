@@ -152,19 +152,16 @@ def get_printers() -> dict:
     except Exception as e:
         raise pick_stream.exceptions.ValidationError(f'Error connecting to CUPS: {e}')  
 
+
 def get_user_material_requests(user:str) -> List:
     pick_stream.validations.validate_exists('User', user)
-
     settings = pick_stream.utils.get_settings()
-
     user_branch = pick_stream.utils.get_user_branch(user)
     # Get group before branch to throw error if warehouse_group_map is not configured in settings
     warehouse_group = pick_stream.utils.get_warehouse_group(user, user_branch, settings)
     default_branch = settings.warehouse_group_map[0].branch
-
     user_item_groups = pick_stream.utils.get_assigned_item_groups(user)
     child_warehouses = pick_stream.utils.get_child_warehouses(warehouse_group)
-
     # Use default set_from_warehouse if user has default branch and no set_from_warehouse is defined in material request 
     if user_branch == default_branch:
         default_set_from_warehouse = settings.default_set_from_warehouse
@@ -176,7 +173,6 @@ def get_user_material_requests(user:str) -> List:
             'child_warehouses': tuple(child_warehouses),
             'default_set_from_warehouse': default_set_from_warehouse
         }
-
     else:
         source_warehouse_query = '%(warehouse_group)s'
         warehouse_filter_condition = "AND (mr.set_from_warehouse = %(warehouse_group)s)"
@@ -186,7 +182,6 @@ def get_user_material_requests(user:str) -> List:
             'child_warehouses': tuple(child_warehouses),
             'warehouse_group': warehouse_group
         }
-
     mr_list = frappe.db.sql(
         f"""
             SELECT 
@@ -218,38 +213,34 @@ def get_user_material_requests(user:str) -> List:
         query_params,
         as_dict=True
     ) or []
-
     if not mr_list:
         return []
-    
     filtered_mr_list = []
-
     for mr in mr_list:
         mr_name = mr.get('name')
         availability = pick_stream.utils.get_mr_available_item_groups_for_user(
             mr_name,
             user,
-            child_warehouses=child_warehouses
+            child_warehouses
         )
         if availability is None:
             continue
-        
-        available_groups = [group for group in availability if group.available]
-
+        available_groups = [group for group in availability]
         if available_groups:
             mr['item_group_availability'] = available_groups
             filtered_mr_list.append(mr)
-
     return filtered_mr_list
         
+
 def get_material_request_item_groups_view_details(mr_name: str, user: str) -> dict:
     pick_stream.validations.validate_exists('User', user)
     pick_stream.validations.validate_exists('Material Request', mr_name)
     pick_stream.validations.validate_user_assigned_to_mr(mr_name, user)
-
     settings = pick_stream.utils.get_settings()
     default_set_from_warehouse = settings.default_set_from_warehouse
-
+    user_branch = pick_stream.utils.get_user_branch(user)
+    warehouse_group = pick_stream.utils.get_warehouse_group(user, user_branch)
+    child_warehouses = pick_stream.utils.get_child_warehouses(warehouse_group)
     out = frappe.db.sql(
         """
             SELECT 
@@ -266,9 +257,11 @@ def get_material_request_item_groups_view_details(mr_name: str, user: str) -> di
         },
         as_dict=True
     )[0]
-
-    out['item_group_availability'] = pick_stream.utils.get_mr_available_item_groups_for_user(mr_name, user)
-
+    out['item_group_availability'] = pick_stream.utils.get_mr_available_item_groups_for_user(
+        mr_name,
+        user,
+        child_warehouses
+    )
     for item_group in out['item_group_availability']:
         crates = frappe.db.sql(
             """
@@ -298,9 +291,13 @@ def get_material_request_item_groups_view_details(mr_name: str, user: str) -> di
             as_dict=True
         )
         item_group['crates'] = json.loads(crates[0].get('crates', '[]')) if crates else []
-        item_group['item_count'] = pick_stream.utils.get_material_request_item_group_item_quantity(mr_name, item_group['name'], user)
-
+        item_group['item_count'] = pick_stream.utils.get_material_request_item_group_item_quantity(
+            mr_name,
+            item_group['name'],
+            child_warehouses
+        )
     return out
+
 
 # TODO: Dont hardcode this
 def get_workflow_target_warehouse(user:str, user_branch:str) -> str:

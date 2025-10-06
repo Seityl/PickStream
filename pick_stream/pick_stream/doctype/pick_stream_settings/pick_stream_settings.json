@@ -188,8 +188,10 @@
   {
    "fieldname": "privileged_user_role",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Privileged User Role",
-   "options": "Role"
+   "options": "Role",
+   "reqd": 1
   },
   {
    "fieldname": "picking_user_role",
@@ -206,7 +208,7 @@
  "in_create": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-08-10 17:37:31.077324",
+ "modified": "2025-10-06 11:47:14.585682",
  "modified_by": "jeriel@jollysonline.com",
  "module": "Pick Stream",
  "name": "Pick Stream Settings",
