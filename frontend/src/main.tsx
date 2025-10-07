@@ -49,7 +49,7 @@ const router = createBrowserRouter(createRoutesFromElements(
         <Route path="notifications" element={<Notifications />} loader={notificationsLoader} />
         <Route path="tools/identifier-lookup" element={<IdentifierLookup/>} loader={IdentifierLookupLoader} />
         <Route path="tools/item-lookup/:id" element={<ItemIdentifierDetail />}/>
-        <Route path="tools/crate" element={<Crate />} loader={crateLoader} />
+        <Route path="tools/active-crate" element={<Crate />} loader={crateLoader} />
         <Route path="transit" element={<TransitList />} loader={transitLoader}/>
         <Route path="transit/:crateId" element={<CrateTransit />} loader={crateTransitLoader} errorElement={<ErrorPage />}/>
         <Route path="receiving" element={<ReceivingList />} loader={receivingLoader}/>

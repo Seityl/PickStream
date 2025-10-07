@@ -100,7 +100,7 @@ function MaterialRequestList() {
               <div className='space-y-4'>
                 {materialRequests.map((materialRequest: MatReqItem, index: number) => (
                   <div 
-                    key={index} 
+                    key={materialRequest.name || index} 
                     className='bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden'
                   >
                     <MaterialRequestItem {...materialRequest} />
@@ -140,14 +140,14 @@ export default MaterialRequestList;
 export async function materialRequestLoader() {
   try {
     const user = await getCurrentUser();
-    console.log('material request loader - ', user);
+    console.log('Material request loader - User:', user);
     
     if (!user) {
       throw new Error('User not authenticated');
     }
     
     const response = await getMaterialRequests(user);
-    console.log('material requests response -', response);
+    console.log('Material requests response:', response);
     
     // Check if response contains an error structure
     if (response && response.message && response.message.status >= 400) {
@@ -155,18 +155,36 @@ export async function materialRequestLoader() {
       return null; // Trigger error state
     }
     
+    // Helper function to normalize a single material request
+    const normalizeMaterialRequest = (mr: any): MatReqItem => ({
+      name: mr.name || '',
+      target_warehouse: mr.target_warehouse || '',
+      source_warehouse: mr.source_warehouse || '',
+      status: mr.status || 'Open',
+      // Ensure item_group_availability is an object, not an array
+      item_group_availability: 
+        typeof mr.item_group_availability === 'object' && !Array.isArray(mr.item_group_availability)
+          ? mr.item_group_availability 
+          : {}
+    });
+    
     // Handle case where response has the data nested in message.data
     if (response && response.message && Array.isArray(response.message.data)) {
-      return response.message.data;
+      const materialRequests = response.message.data;
+      const normalizedRequests = materialRequests.map(normalizeMaterialRequest);
+      
+      console.log('Normalized material requests:', normalizedRequests);
+      return normalizedRequests;
     }
     
     // Handle direct array response
     if (Array.isArray(response)) {
-      return response;
+      const normalizedRequests = response.map(normalizeMaterialRequest);
+      return normalizedRequests;
     }
     
     // If response exists but isn't an array or expected structure, return empty array
-    return response || [];
+    return response ? [] : [];
   } catch (error) {
     console.error('Failed to load material requests:', error);
     // Return null to trigger error state in component

@@ -46,23 +46,15 @@ def get_child_warehouses(parent_warehouse:str) -> List:
 
 def get_assigned_item_groups(user:str) -> List:
     """Get item groups assigned to a user through User Group relationships."""
-    user_item_groups = frappe.get_all(
-        'User Group',
-        filters={
-            'custom_is_item_group': 1,
-            'name': ['in', frappe.get_all(
-                'User Group Member',
-                filters={
-                    'parenttype': 'User Group',
-                    'user': user
-                },
-                pluck='parent'
-            )]
-        },
-        fields=['name'],
-        pluck='name',
-        distinct=True
-    )
+    user_item_groups = frappe.db.sql_list("""
+        SELECT DISTINCT ug.name
+        FROM `tabUser Group` ug
+        INNER JOIN `tabUser Group Member` ugm 
+            ON ug.name = ugm.parent
+        WHERE ugm.user = %(user)s
+            AND ug.custom_is_item_group = 1
+            AND ugm.parenttype = 'User Group'
+    """, {'user': user})
     if not user_item_groups:
         raise pick_stream.exceptions.ValidationError(f"User '{user}' is not assigned to any item group. Contact Supervisor.")
     return user_item_groups
@@ -70,16 +62,21 @@ def get_assigned_item_groups(user:str) -> List:
 
 def get_mr_item_groups_for_user(mr_name:str, user:str, user_item_groups:List=[]) -> List:
     try:
-        if not user_item_groups:
-            user_item_groups = get_assigned_item_groups(user)
-        mr_groups = frappe.get_all(
-            'Material Request Item',
-            filters = {'parent': mr_name, 'item_group': ['in', user_item_groups]},
-            pluck = 'item_group',
-            distinct = True
-        )
-        for mr_group in mr_groups:
-            pick_stream.validations.validate_user_assigned_to_item_group(user, mr_group)
+        user_item_groups = get_assigned_item_groups(user)
+        mr_groups = frappe.db.sql_list("""
+            SELECT DISTINCT mri.item_group
+            FROM `tabMaterial Request Item` mri
+            INNER JOIN `tabUser Group Member` ugm 
+                ON ugm.parent = mri.item_group
+            WHERE mri.parent = %(mr_name)s
+                AND mri.item_group IN %(user_item_groups)s
+                AND ugm.user = %(user)s
+                AND ugm.parenttype = 'User Group'
+        """, {
+            'mr_name': mr_name,
+            'user_item_groups': tuple(user_item_groups),
+            'user': user
+        })
         return mr_groups
     except Exception as e:
         raise pick_stream.exceptions.ValidationError(f'Error getting item groups for user: {e}') 

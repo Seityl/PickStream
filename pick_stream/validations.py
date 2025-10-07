@@ -11,6 +11,21 @@ def validate_exists(doctype:str, id:str, child:bool = False, field:str = None) -
     if not frappe.db.exists(doctype, {field:id}):
         raise pick_stream.exceptions.DoesNotExistError(f"{doctype} '{id}' does not exist.")
 
+
+def validate_permission(user:str, workflow:str) -> None:
+    """Raises an exception if user does not have permission for specified workflow"""
+    allowed_permissions = {'picking', 'transit', 'verification', 'receiving'}
+    if workflow not in allowed_permissions:
+        raise pick_stream.exceptions.PermissionError(
+            f"Invalid workflow permission: '{workflow}'. "
+            f"Expected one of {', '.join(allowed_permissions)}."
+        )
+    access = pick_stream.utils.get_user_workflow_access(user)
+    if not access.get(workflow, False):
+        raise pick_stream.exceptions.PermissionError(
+            f"User '{user}' does not have permission for '{workflow}' workflow."
+        )
+        
      
 def validate_user_assigned_to_item_group(user:str, id:str) -> None:
     """Raises an exception if user is not assigned to item group"""

@@ -153,49 +153,34 @@ def get_printers() -> dict:
         raise pick_stream.exceptions.ValidationError(f'Error connecting to CUPS: {e}')  
 
 
-def get_user_material_requests(user:str) -> List:
+def get_user_material_requests(user: str) -> List:
+    """Returns submitted Material Requests assigned to a user with item group availability."""
     pick_stream.validations.validate_exists('User', user)
-    settings = pick_stream.utils.get_settings()
-    user_branch = pick_stream.utils.get_user_branch(user)
-    warehouse_group = pick_stream.utils.get_warehouse_group(user, user_branch, settings)
-    default_branch = settings.warehouse_group_map[0].branch
+    pick_stream.validations.validate_permission(user, 'picking')
+    # Get user context
     user_item_groups = pick_stream.utils.get_assigned_item_groups(user)
+    user_branch = pick_stream.utils.get_user_branch(user)
+    warehouse_group = pick_stream.utils.get_warehouse_group(user, user_branch)  
     child_warehouses = pick_stream.utils.get_child_warehouses(warehouse_group)
-    # Use default set_from_warehouse if user has default branch and no set_from_warehouse is defined in material request 
-    if user_branch == default_branch:
-        default_set_from_warehouse = settings.default_set_from_warehouse
-        source_warehouse_query = 'COALESCE(mr.set_from_warehouse, %(default_set_from_warehouse)s)'
-        warehouse_filter_condition = ''
-        query_params = {
-            'user': user,
-            'user_item_groups': tuple(user_item_groups),
-            'child_warehouses': tuple(child_warehouses),
-            'default_set_from_warehouse': default_set_from_warehouse
-        }
-    else:
-        source_warehouse_query = '%(warehouse_group)s'
-        warehouse_filter_condition = "AND (mr.set_from_warehouse = %(warehouse_group)s)"
-        query_params = {
-            'user': user,
-            'user_item_groups': tuple(user_item_groups),
-            'child_warehouses': tuple(child_warehouses),
-            'warehouse_group': warehouse_group
-        }
-    mr_list = frappe.db.sql(
-        f"""
-            SELECT 
+    # Get default warehouse from settings
+    settings = pick_stream.utils.get_settings()
+    default_set_from_warehouse = settings.default_set_from_warehouse
+    mr_list = frappe.db.sql("""
+        WITH UserMRs AS (
+            -- Get all submitted MRs assigned to user with availability check
+            SELECT DISTINCT
                 mr.name,
                 mr.set_warehouse AS target_warehouse,
-                {source_warehouse_query} AS source_warehouse,
-                td.status
+                -- Use default warehouse if set_from_warehouse is NULL or empty
+                COALESCE(NULLIF(mr.set_from_warehouse, ''), %(default_warehouse)s) AS source_warehouse,
+                mr.creation
             FROM `tabToDo` td
             INNER JOIN `tabMaterial Request` mr
                 ON td.reference_name = mr.name
-            WHERE
-                mr.docstatus = 1
-                AND td.allocated_to = %(user)s
+            WHERE td.allocated_to = %(user)s
                 AND td.status = 'Open'
-                {warehouse_filter_condition}
+                AND td.reference_type = 'Material Request'
+                AND mr.docstatus = 1
                 AND EXISTS (
                     SELECT 1
                     FROM `tabMaterial Request Item` mri
@@ -207,29 +192,75 @@ def get_user_material_requests(user:str) -> List:
                         AND bin.warehouse IN %(child_warehouses)s
                         AND (mri.stock_qty > COALESCE(mri.ordered_qty, 0))
                 )
-            ORDER BY mr.creation ASC
-        """, 
-        query_params,
-        as_dict=True
-    ) or []
-    if not mr_list:
-        return []
-    filtered_mr_list = []
-    for mr in mr_list:
-        mr_name = mr.get('name')
-        availability = pick_stream.utils.get_mr_available_item_groups_for_user(
-            mr_name,
-            user,
-            child_warehouses,
-            user_item_groups
+        ),
+        ItemGroupAvailability AS (
+            -- Get availability with specific reasons for each item group per MR
+            SELECT 
+                mri.parent AS mr_name,
+                mri.item_group,
+                CASE 
+                    -- Check if completed Source exists
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM `tabSource` src
+                        WHERE src.item_group = mri.item_group
+                            AND src.material_request = mri.parent
+                            AND (src.status = 'Completed' OR src.docstatus = 1)
+                    ) THEN 'already_picked'
+                    -- Check if stock is available for ANY item in this group
+                    WHEN NOT EXISTS (
+                        SELECT 1
+                        FROM `tabMaterial Request Item` mri_check
+                        INNER JOIN `tabItem` item ON mri_check.item_code = item.name
+                        INNER JOIN `tabBin` bin ON mri_check.item_code = bin.item_code
+                        WHERE mri_check.parent = mri.parent
+                            AND item.item_group = mri.item_group
+                            AND bin.actual_qty >= 1
+                            AND bin.warehouse IN %(child_warehouses)s
+                            AND (mri_check.stock_qty > COALESCE(mri_check.ordered_qty, 0))
+                    ) THEN 'no_stock'
+                    -- Otherwise available
+                    ELSE 'available'
+                END AS availability_status
+            FROM `tabMaterial Request Item` mri
+            INNER JOIN UserMRs umr ON mri.parent = umr.name
+            WHERE mri.item_group IN %(user_item_groups)s
+            GROUP BY mri.parent, mri.item_group
         )
-        if availability is None:
-            continue
-        available_groups = [group for group in availability]
-        if available_groups:
-            mr['item_group_availability'] = available_groups
-            filtered_mr_list.append(mr)
-    return filtered_mr_list
+        SELECT 
+            umr.name,
+            umr.target_warehouse,
+            umr.source_warehouse,
+            -- Aggregate item group availability as JSON object with status
+            COALESCE(
+                JSON_OBJECTAGG(
+                    iga.item_group, 
+                    iga.availability_status
+                ),
+                JSON_OBJECT()
+            ) AS item_group_availability
+        FROM UserMRs umr
+        LEFT JOIN ItemGroupAvailability iga ON umr.name = iga.mr_name
+        GROUP BY umr.name, umr.target_warehouse, umr.source_warehouse, umr.creation
+        ORDER BY umr.creation ASC
+    """, {
+        'user': user,
+        'user_item_groups': tuple(user_item_groups),
+        'child_warehouses': tuple(child_warehouses),
+        'default_warehouse': default_set_from_warehouse
+    }, as_dict=True)
+    # Parse JSON
+    for mr in mr_list:
+        if mr.get('item_group_availability'):
+            try:
+                # Convert JSON string to dict if needed
+                if isinstance(mr['item_group_availability'], str):
+                    mr['item_group_availability'] = json.loads(mr['item_group_availability'])
+            except (json.JSONDecodeError, AttributeError):
+                mr['item_group_availability'] = {}
+        else:
+            mr['item_group_availability'] = {}
+    return mr_list
         
 
 def get_material_request_item_groups_view_details(mr_name: str, user: str) -> dict:
