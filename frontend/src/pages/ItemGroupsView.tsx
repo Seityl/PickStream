@@ -1,5 +1,5 @@
 import { useParams, Link, useLoaderData, LoaderFunctionArgs } from 'react-router';
-import { FaArrowLeft, FaArrowRight, FaCheckCircle, FaSpinner, FaBox } from "react-icons/fa";
+import { FaArrowLeft, FaArrowRight, FaCheckCircle, FaSpinner, FaBox, FaExclamationCircle } from "react-icons/fa";
 import { getItemGroups } from '../../utils/api';
 import { getCurrentUser } from '../../utils/auth';
 
@@ -12,8 +12,7 @@ type MaterialRequest = {
 
 type ItemGroup = {
   name: string;
-  reason: string;
-  available: boolean;
+  status: 'available' | 'already_picked' | 'no_stock';
   item_count: {
     completed: number;
     total: number;
@@ -40,10 +39,14 @@ function ItemGroupsView() {
     );
   }
 
-  // Calculate summary statistics - only count available item groups
-  const availableItemGroups = viewData.item_group_availability.filter(item => !item.reason || item.reason.trim() === "");
-  const totalItems = availableItemGroups.length;
-  const completedItems = availableItemGroups.filter(item => item.item_count.completed === item.item_count.total).length;
+  // Calculate summary statistics - count available and already_picked item groups
+  const relevantItemGroups = viewData.item_group_availability.filter(item => 
+    item.status === 'available' || item.status === 'already_picked'
+  );
+  const totalItems = relevantItemGroups.length;
+  const completedItems = relevantItemGroups.filter(item => 
+    item.status === 'already_picked' || item.item_count.completed === item.item_count.total
+  ).length;
 
   return (
     <main>
@@ -83,7 +86,9 @@ function ItemGroupsView() {
         {viewData.item_group_availability.length > 0 ? (
           <div className='space-y-3'>
             {viewData.item_group_availability.map((itemGroup: ItemGroup, index: number) => {
-              const isReadOnly = !!itemGroup.reason && itemGroup.reason.trim() !== "";
+              const isReadOnly = itemGroup.status !== 'available';
+              const isAlreadyPicked = itemGroup.status === 'already_picked';
+              const isNoStock = itemGroup.status === 'no_stock';
 
               const progress = itemGroup.item_count.total > 0 
                 ? Math.round((itemGroup.item_count.completed / itemGroup.item_count.total) * 100) 
@@ -92,20 +97,31 @@ function ItemGroupsView() {
               const isComplete = itemGroup.item_count.completed === itemGroup.item_count.total;
               const hasStarted = itemGroup.item_count.completed > 0;
 
+              // Helper function to get status label
+              const getStatusLabel = () => {
+                if (isAlreadyPicked) return 'Already Picked';
+                if (isNoStock) return 'No Stock';
+                return '';
+              };
+
               const CardContent = (
                 <div className='p-4'>
                   {/* Header */}
                   <div className='flex items-center justify-between mb-3'>
                     <div className='flex items-center space-x-3 min-w-0 flex-1'>
                       <div className={`flex-shrink-0 p-2 rounded-lg ${
-                        isComplete && itemGroup.reason !== "No Available Stock" 
+                        isComplete && !isNoStock
                           ? 'bg-green-50' 
                           : hasStarted 
                             ? 'bg-blue-50' 
-                            : 'bg-gray-50'
+                            : isNoStock
+                              ? 'bg-orange-50'
+                              : 'bg-gray-50'
                       }`}>
-                        {isComplete && itemGroup.reason !== "No Available Stock" ? (
+                        {isComplete && !isNoStock ? (
                           <FaCheckCircle className="w-5 h-5 text-green-600" />
+                        ) : isNoStock ? (
+                          <FaExclamationCircle className="w-5 h-5 text-orange-600" />
                         ) : (
                           <FaBox className="w-5 h-5 text-blue-600" />
                         )}
@@ -117,7 +133,7 @@ function ItemGroupsView() {
                         </h3>
                         <div className='flex items-center space-x-2 mt-1'>
                           <span className={`text-sm font-medium ${
-                            isComplete && itemGroup.reason !== "No Available Stock"
+                            isComplete && !isNoStock
                               ? 'text-green-600'
                               : hasStarted
                                 ? 'text-blue-600'
@@ -136,8 +152,12 @@ function ItemGroupsView() {
 
                     <div className='flex items-center space-x-2'>
                       {isReadOnly && (
-                        <span className='px-2 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full'>
-                          {itemGroup.reason}
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                          isAlreadyPicked 
+                            ? 'bg-gray-100 text-gray-700' 
+                            : 'bg-orange-100 text-orange-700'
+                        }`}>
+                          {getStatusLabel()}
                         </span>
                       )}
                       {!isReadOnly && hasStarted && !isComplete && (
@@ -157,7 +177,7 @@ function ItemGroupsView() {
                   </div>
 
                   {/* Progress Bar */}
-                  {itemGroup.item_count.total > 0 && (
+                  {itemGroup.item_count.total > 0 && !isNoStock && (
                     <div className='mb-3'>
                       <div className='bg-gray-100 rounded-full h-2 overflow-hidden'>
                         <div 

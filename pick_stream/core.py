@@ -253,7 +253,7 @@ def get_user_material_requests(user: str) -> List:
     for mr in mr_list:
         if mr.get('item_group_availability'):
             try:
-                # Convert JSON string to dict if needed
+                # Convert JSON string to dict
                 if isinstance(mr['item_group_availability'], str):
                     mr['item_group_availability'] = json.loads(mr['item_group_availability'])
             except (json.JSONDecodeError, AttributeError):
@@ -263,24 +263,27 @@ def get_user_material_requests(user: str) -> List:
     return mr_list
         
 
-def get_material_request_item_groups_view_details(mr_name: str, user: str) -> dict:
+def get_material_request_item_groups_view_details(mr_name: str, user: str) -> Dict:
     pick_stream.validations.validate_exists('User', user)
+    pick_stream.validations.validate_permission(user, 'picking')
     pick_stream.validations.validate_exists('Material Request', mr_name)
     pick_stream.validations.validate_user_assigned_to_mr(mr_name, user)
-    settings = pick_stream.utils.get_settings()
-    default_set_from_warehouse = settings.default_set_from_warehouse
+    # Get user context
     user_branch = pick_stream.utils.get_user_branch(user)
     warehouse_group = pick_stream.utils.get_warehouse_group(user, user_branch)
     child_warehouses = pick_stream.utils.get_child_warehouses(warehouse_group)
+    # Get default warehouse from settings
+    settings = pick_stream.utils.get_settings()
+    default_set_from_warehouse = settings.default_set_from_warehouse
+    # Get MR info
     out = frappe.db.sql(
         """
             SELECT 
                 mr.name AS mr_name,
                 mr.set_warehouse AS target_warehouse,
-                COALESCE(mr.set_from_warehouse, %(default_set_from_warehouse)s) AS source_warehouse
+                COALESCE(NULLIF(mr.set_from_warehouse, ''), %(default_set_from_warehouse)s) AS source_warehouse
             FROM `tabMaterial Request` mr
-            WHERE
-                mr.name = %(mr_name)s
+            WHERE mr.name = %(mr_name)s
         """,
         {
             'mr_name': mr_name,
@@ -288,12 +291,52 @@ def get_material_request_item_groups_view_details(mr_name: str, user: str) -> di
         },
         as_dict=True
     )[0]
-    out['item_group_availability'] = pick_stream.utils.get_mr_available_item_groups_for_user(
-        mr_name,
-        user,
-        child_warehouses
-    )
-    for item_group in out['item_group_availability']:
+    # Get item groups with availability status
+    item_groups = frappe.db.sql("""
+        SELECT DISTINCT
+            mri.item_group AS name,
+            CASE 
+                -- Check if completed Source exists
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM `tabSource` src
+                    WHERE src.item_group = mri.item_group
+                        AND src.material_request = mri.parent
+                        AND (src.status = 'Completed' OR src.docstatus = 1)
+                ) THEN 'already_picked'
+                -- Check if stock is available for ANY item in this group
+                WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM `tabMaterial Request Item` mri_check
+                    INNER JOIN `tabItem` item ON mri_check.item_code = item.name
+                    INNER JOIN `tabBin` bin ON mri_check.item_code = bin.item_code
+                    WHERE mri_check.parent = mri.parent
+                        AND item.item_group = mri.item_group
+                        AND bin.actual_qty >= 1
+                        AND bin.warehouse IN %(child_warehouses)s
+                        AND (mri_check.stock_qty > COALESCE(mri_check.ordered_qty, 0))
+                ) THEN 'no_stock'
+                -- Otherwise available
+                ELSE 'available'
+            END AS status
+        FROM `tabMaterial Request Item` mri
+        -- Only get item groups assigned to this user
+        INNER JOIN `tabUser Group Member` ugm 
+            ON ugm.parent = mri.item_group
+            AND ugm.parenttype = 'User Group'
+            AND ugm.user = %(user)s
+        INNER JOIN `tabUser Group` ug
+            ON ug.name = ugm.parent
+            AND ug.custom_is_item_group = 1
+        WHERE mri.parent = %(mr_name)s
+    """, {
+        'mr_name': mr_name,
+        'user': user,
+        'child_warehouses': tuple(child_warehouses)
+    }, as_dict=True)
+    # Enrich each item group with crates and item count
+    for item_group in item_groups:
+        # Get crates for this item group
         crates = frappe.db.sql(
             """
                 SELECT COALESCE(
@@ -322,77 +365,278 @@ def get_material_request_item_groups_view_details(mr_name: str, user: str) -> di
             as_dict=True
         )
         item_group['crates'] = json.loads(crates[0].get('crates', '[]')) if crates else []
+        # Get item count for this item group
         item_group['item_count'] = pick_stream.utils.get_material_request_item_group_item_quantity(
             mr_name,
             item_group['name'],
             child_warehouses
         )
+    out['item_group_availability'] = item_groups
     return out
 
 
-# TODO: Dont hardcode this
-def get_workflow_target_warehouse(user:str, user_branch:str) -> str:
-    match user_branch:
-        case 'King George':
-            return 'KG Stock - JP'
-        case 'JP Mega':
-            return 'Mega Retail - JP'
-        case 'JP Mini':
-            return 'JPMini Stock - JP'
-        case 'Great George':
-            return 'GG Stock - JP'
-        case 'Portsmouth':
-            return 'JPPM Stock - JP'
-        case _:
-            raise pick_stream.exceptions.ValidationError(f"Employee for user '{user}' branch is not valid. Contact HR Department.")
-
-def get_material_request_picking_view_details(mr_name:str, user:str, item_group:str) -> dict:
-    if pick_stream.utils.check_source_exists(mr_name, item_group):
-        source_name = pick_stream.utils.get_source_name(mr_name, item_group)
-        return get_relevant_source_item(source_name)
+def get_material_request_picking_view_details(mr_name:str, user:str, item_group:str) -> Dict:
+    pick_stream.validations.validate_exists('User', user)
+    pick_stream.validations.validate_permission(user, 'picking')
+    pick_stream.validations.validate_exists('Material Request', mr_name)
+    pick_stream.validations.validate_user_assigned_to_mr(mr_name, user)
+    source_name = pick_stream.utils.get_source_name(mr_name, item_group)
+    if source_name:
+        return pick_stream.utils.get_relevant_source_item(source_name)
     else:
-        source = create_source(mr_name, item_group, user)
-        return get_relevant_source_item(source.name)
+        source = pick_stream.utils.create_source(mr_name, item_group, user)
+        return pick_stream.utils.get_relevant_source_item(source.name)
 
-def get_relevant_source_item(source_name: str) -> dict:
-    out = frappe._dict()
+
+def process_scan_details(
+    user:str,
+    mr_name:str,
+    item_code:str,
+    item_group:str,
+    crates:Any=[],
+    as_box:bool = False,
+    scanned_qty:int = 0,
+    skipped:bool = False,
+    as_other:bool = False,
+    crate_code:str = None
+) -> dict:
+    pick_stream.validations.validate_scan_params(scanned_qty, crate_code, as_box, as_other, skipped, crates)
+    if crate_code:
+        pick_stream.validations.validate_exists('Crate', crate_code)
+    if crates:
+        crates = json.loads(crates)
+        crates = [frappe._dict(crate) for crate in crates]
+        [pick_stream.validations.validate_exists('Crate', crate.crate_code) for crate in crates]
+    pick_stream.validations.validate_exists('User', user)
+    pick_stream.validations.validate_permission(user, 'picking')
+    pick_stream.validations.validate_exists('Item', item_code)
+    pick_stream.validations.validate_exists('Material Request', mr_name)
+    pick_stream.validations.validate_user_assigned_to_mr(mr_name, user)
+    pick_stream.validations.validate_user_assigned_to_item_group(user, item_group)
+    source_name = pick_stream.utils.get_source_name(mr_name, item_group)
+    if not source_name:
+        raise pick_stream.exceptions.SystemError(
+            f"Source for Material Request '{mr_name}' does not exist. Contact IT."
+        )
+    relevant_item = pick_stream.utils.get_relevant_source_item(source_name) 
+    if relevant_item.item_code != item_code:
+        raise pick_stream.exceptions.SystemError(
+            f"Scanned item '{item_code}' does not match relevant item '{relevant_item.item_code}'. Contact IT."
+        )
     doc = frappe.get_doc('Source', source_name)
-    
+    settings = pick_stream.utils.get_settings()
+    # Default to default set from warehouse if not set on material request
+    from_warehouse = frappe.db.get_value(
+        'Material Request',
+        mr_name,
+        'set_from_warehouse'
+    ) or settings.default_set_from_warehouse
+    to_warehouse = frappe.db.get_value(
+        'Material Request',
+        mr_name,
+        'set_warehouse'
+    )
+    out = frappe._dict()
+    if crate_code:
+        out.message = process_scan_as_crate(
+            doc,
+            crate_code,
+            item_code,
+            user,
+            scanned_qty
+        )
+    elif crates:
+        out.message = process_scan_as_crates(
+            doc,
+            crates,
+            user,
+            item_code
+        )
+    elif as_box:
+        identifier_code = create_item_identifier(
+            item_code,
+            'box',
+            user,
+            mr_name,
+            from_warehouse,
+            to_warehouse,
+            scanned_qty,
+            relevant_item.uom
+        )
+        out.message = process_scan_as_box(
+            doc,
+            identifier_code,
+            item_code,
+            scanned_qty,
+            user
+        )
+    elif as_other:
+        identifier_code = create_item_identifier(item_code,
+            'other',
+            user,
+            mr_name,
+            from_warehouse,
+            to_warehouse,
+            scanned_qty,
+            relevant_item.uom
+        )
+        out.message = process_scan_as_other(doc,
+            identifier_code,
+            item_code,
+            scanned_qty,
+            user
+        )
+    elif skipped:
+        out.message = process_scan_as_skip(
+            doc,
+            item_code
+        )
+    # Increment scan pointer
+    if not doc.scan_pointer:
+        doc.scan_pointer = 0
+    doc.scan_pointer += 1
+    frappe.db.savepoint('process_scan_details')
     try:
-        item = next(item for item in doc.items if not item.scanned and not item.skipped)
-        
-        out.item_code = item.item_code
-        out.description = html.unescape(strip_html(item.description)) if item.description else ''
-        out.uom = item.uom
-        out.from_warehouse = item.from_warehouse
-        out.to_warehouse = doc.to_warehouse
-        # For current item idx / total number of items
-        out.idx = item.idx
-        out.item_count = len(doc.items)
-
-        duplicate_items = [i for i in doc.items if i.item_code == item.item_code]
-        
-        if len(duplicate_items) > 1:
-            requested_qty = duplicate_items[0].requested_qty
-            
-            # Calculate already picked qty for this item_code
-            already_scanned_qty = sum(i.scanned_qty or 0 for i in duplicate_items if i.scanned)
-            
-            # Calculate remaining qty needed
-            remaining_qty_needed = requested_qty - already_scanned_qty
-            
-            # Use the minimum of available_qty and remaining_qty_needed to prevent over-picking
-            out.requested_qty = min(item.available_qty, remaining_qty_needed)
-
-        else:
-            # No duplicates - use requested_qty (assuming available_qty >= requested_qty)
-            out.requested_qty = item.requested_qty
-
-    except StopIteration:
-        # No items found matching the criteria
-        pass
-    
+        doc.save()
+        frappe.db.commit()
+        if crates:
+            for crate in crates[:-1]:
+                close_crate(crate.crate_code, commit=True)
+    except Exception as e:
+        frappe.db.rollback()
+        raise pick_stream.exceptions.SystemError(str(e))
+    out.complete = frappe.db.get_value('Source', doc.name, 'status') == 'Completed'
     return out
+
+
+def process_scan_as_crate(
+        source:Dict,
+        crate_code:str,
+        item_code:str,
+        user:str,
+        scanned_qty:int,
+        from_crates:bool=False
+    ) -> str:
+    if from_crates:
+        item = next(
+            (item for item in source.items if item.item_code == item_code and not item.skipped),
+            None
+        )
+    else:
+        item = next(
+            (item for item in source.items if item.item_code == item_code and not item.skipped and not item.scanned),
+            None
+        )
+    if not item:
+        raise pick_stream.exceptions.SystemError(
+            f'Item {item_code} not found in source document. Contact IT.'
+        )
+    existing_crate = next((
+        crate for crate in source.item_crates
+        if crate.item_code == item_code 
+        and crate.crate_code == crate_code
+        and crate.source_item == item.name
+    ), None)
+    if existing_crate:
+        raise pick_stream.exceptions.SystemError(
+            f'Crate {crate_code} already exists for item {item_code}. Contact IT.'
+        )
+    source.append('item_crates', {
+        'picked_timestamp': frappe.utils.now(),
+        'from_warehouse': item.from_warehouse,
+        'source_item': item.name,
+        'crate_code': crate_code,
+        'item_code': item_code,
+        'picking_user': user,
+        'qty': scanned_qty
+    })
+    item.scanned = 1
+    return f'Scanned {scanned_qty} {item.uom} for item {item_code} into crate {crate_code}'
+
+
+def process_scan_as_crates(doc: Dict, crates:str, user:str, item_code:str) -> str:
+    out = []
+    for crate in crates:
+        result = process_scan_as_crate(
+            doc,
+            crate.crate_code,
+            item_code,
+            user,
+            crate.scanned_qty,
+            from_crates=True
+        )
+        out.append(result)
+    return  ' '.join(out)
+
+    
+def process_scan_as_box(source:Dict, identifier_code:str, item_code:str, scanned_qty:int, user:str) -> str:
+    item = next(
+        (item for item in source.items if item.item_code == item_code and not item.skipped and not item.scanned),
+        None
+    )
+    if not item:
+        raise pick_stream.exceptions.SystemError(
+            f'Item {item_code} not found in source document. Contact IT.'
+        )
+    existing_identifier = next((
+        identifier for identifier in source.item_crates
+        if identifier.item_code == item_code and identifier.identifier_code == identifier_code
+    ), None)
+    if existing_identifier:
+        raise pick_stream.exceptions.SystemError(
+            f'Identifier {identifier_code} already exists for item {item_code}. Contact IT.'
+        )
+    source.append('item_crates', {
+        'picked_timestamp': frappe.utils.now(),
+        'from_warehouse': item.from_warehouse,
+        'identifier_code': identifier_code,
+        'source_item': item.name,
+        'item_code': item_code,
+        'picking_user': user,
+        'qty': scanned_qty
+    })
+    item.scanned = 1
+    item.is_box_item = 1
+    return f'Scanned {scanned_qty} {item.uom} for item {item_code} assigned to identifier {identifier_code}'
+
+
+def process_scan_as_other(source:Dict, identifier_code:str, item_code:str, scanned_qty:int, user:str) -> str:
+    item = next(
+        (item for item in source.items if item.item_code == item_code and not item.skipped and not item.scanned),
+        None
+    )
+    if not item:
+        raise pick_stream.exceptions.SystemError(
+            f'Item {item_code} not found in source document. Contact IT.'
+        )
+    existing_identifier = next((
+        identifier for identifier in source.item_crates
+        if identifier.item_code == item_code and identifier.identifier_code == identifier_code
+    ), None)
+    if existing_identifier:
+        raise pick_stream.exceptions.SystemError(
+            f'Identifier {identifier_code} already exists for item {item_code}. Contact IT.'
+        )
+    source.append('item_crates', {
+        'picked_timestamp': frappe.utils.now(),
+        'from_warehouse': item.from_warehouse,
+        'identifier_code': identifier_code,
+        'source_item': item.name,
+        'item_code': item_code,
+        'picking_user': user,
+        'qty': scanned_qty
+    })
+    item.scanned = 1
+    item.is_other_item = 1
+    return f'Scanned {scanned_qty} {item.uom} for item {item_code} assigned to identifier {identifier_code}'
+
+
+def process_scan_as_skip(source:Dict, item_code:str) -> str:
+    item = next(
+        (item for item in source.items if item.item_code == item_code and not item.scanned and not item.skipped)
+    )
+    item.skipped = 1
+    return f'Skipped item {item_code}'
 
 
 def get_user_crate(user: str) -> Optional[str]:
@@ -573,46 +817,6 @@ def get_crate_details_(
             ) or []
     })
 
-def create_source(mr_name:str, item_group:str, user:str) -> dict:
-    source = frappe.new_doc('Source')
-    items = pick_stream.utils.get_material_request_items_details(mr_name, user, item_group)
-
-    settings = pick_stream.utils.get_settings()
-    default_set_from_warehouse = settings.default_set_from_warehouse
-
-    source.update({
-        'material_request': mr_name,
-        'from_warehouse': frappe.db.get_value('Material Request', mr_name, 'set_from_warehouse') or default_set_from_warehouse,
-        'to_warehouse': frappe.db.get_value('Material Request', mr_name, 'set_warehouse'),
-        'item_group': item_group,
-        'user': user
-    })
-
-    for item in items:
-        source.append('items', {
-            'item_code': item.get('item_code'),
-            'item_name': item.get('item_name'),
-            'item_group': item.get('item_group'),
-            'description': item.get('description'),
-            'from_warehouse': item.get('from_warehouse'),
-            'to_warehouse': item.get('to_warehouse'),
-            'uom': item.get('uom'),
-            'requested_qty': item.get('requested_qty'),
-            'material_request': item.get('material_request'),
-            'material_request_item': item.get('material_request_item')
-        })
-
-    frappe.db.savepoint('create_source')
-
-    try:
-        source.insert()
-        frappe.db.commit()
-        return source
-
-    except Exception as e:
-        frappe.db.rollback()
-        raise pick_stream.exceptions.SystemError(str(e))
-
 def crate_is_closed(crate_code:str, user:str) -> bool:
     pick_stream.validations.validate_exists('Crate', crate_code)
     pick_stream.validations.validate_exists('User', user)
@@ -753,185 +957,6 @@ def update_stream(source:dict, stream_name:str, status:str) -> dict:
     except Exception as e:
         frappe.db.rollback()
         raise pick_stream.exceptions.ValidationError(str(e))
-
-def process_scan_details(
-    user:str,
-    mr_name:str,
-    item_code:str,
-    item_group:str,
-    crates:Any=[],
-    as_box:bool = False,
-    scanned_qty:int = 0,
-    skipped:bool = False,
-    as_other:bool = False,
-    crate_code:str = None
-) -> dict:
-    pick_stream.validations.validate_scan_params(scanned_qty, crate_code, as_box, as_other, skipped, crates)
-    if crate_code:
-        pick_stream.validations.validate_exists('Crate', crate_code)
-
-    if crates:
-        crates = json.loads(crates)
-        crates = [frappe._dict(crate) for crate in crates]
-        [pick_stream.validations.validate_exists('Crate', crate.crate_code) for crate in crates]
-
-    pick_stream.validations.validate_exists('User', user)
-    pick_stream.validations.validate_exists('Item', item_code)
-    pick_stream.validations.validate_exists('Material Request', mr_name)
-
-    pick_stream.validations.validate_user_assigned_to_mr(mr_name, user)
-    pick_stream.validations.validate_user_assigned_to_item_group(user, item_group)
-
-    source_name = pick_stream.utils.get_source_name(mr_name, item_group)
-    if not source_name:
-        raise pick_stream.exceptions.SystemError(f"Source for Material Request '{mr_name}' does not exist. Contact IT.")
-
-    relevant_item = get_relevant_source_item(source_name) 
-    if relevant_item.item_code != item_code:
-        raise pick_stream.exceptions.SystemError(f"Scanned item '{item_code}' does not match relevant item '{relevant_item.item_code}'. Contact IT.")
-
-    doc = frappe.get_doc('Source', source_name)
-    settings = pick_stream.utils.get_settings()
-    # Default to default set from warehouse if not set on material request
-    from_warehouse = frappe.db.get_value('Material Request', mr_name, 'set_from_warehouse') or settings.default_set_from_warehouse
-    to_warehouse = frappe.db.get_value('Material Request', mr_name, 'set_warehouse')
-
-    out = frappe._dict()
-
-    if crate_code:
-        out.message = process_scan_as_crate(doc, crate_code, item_code, user, scanned_qty)
-    elif as_box:
-        identifier_code = create_item_identifier(item_code, 'box', user, mr_name, from_warehouse, to_warehouse, scanned_qty, relevant_item.uom)
-        out.message = process_scan_as_box(doc, identifier_code, item_code, scanned_qty, user)
-    elif as_other:
-        identifier_code = create_item_identifier(item_code, 'other', user, mr_name, from_warehouse, to_warehouse, scanned_qty, relevant_item.uom)
-        out.message = process_scan_as_other(doc, identifier_code, item_code, scanned_qty, user)
-    elif skipped:
-        out.message = process_scan_as_skip(doc, item_code)
-    elif crates:
-        out.message = process_scan_as_crates(doc, crates, user, item_code)
-
-    doc.scan_pointer += 1
-
-    frappe.db.savepoint('process_scan_details')
-
-    try:
-        doc.save()
-        frappe.db.commit()
-
-        if crates:
-            for crate in crates[:-1]:
-                close_crate(crate.crate_code, commit=True)
-
-    except Exception as e:
-        frappe.db.rollback()
-        raise pick_stream.exceptions.SystemError(str(e))
-        
-    out.complete = frappe.db.get_value('Source', doc.name, 'status') == 'Completed'
-        
-    return out
-
-def process_scan_as_crate(source:dict, crate_code:str, item_code:str, user:str, scanned_qty:int, from_crates:bool = False) -> str:
-    if from_crates:
-        item = next((item for item in source.items if item.item_code == item_code and not item.skipped), None)
-    else:
-        item = next((item for item in source.items if item.item_code == item_code and not item.skipped and not item.scanned), None)
-    
-    if not item:
-        raise pick_stream.exceptions.SystemError(f'Item {item_code} not found in source document. Contact IT.')
-    
-    existing_crate = next((
-        crate for crate in source.item_crates
-        if crate.item_code == item_code 
-        and crate.crate_code == crate_code
-        and crate.source_item == item.name
-    ), None)
-    
-    if existing_crate:
-        raise pick_stream.exceptions.SystemError(f'Crate {crate_code} already exists for item {item_code}. Contact IT.')
-    
-    source.append('item_crates', {
-        'picked_timestamp': frappe.utils.now(),
-        'from_warehouse': item.from_warehouse,
-        'source_item': item.name,
-        'crate_code': crate_code,
-        'item_code': item_code,
-        'picking_user': user,
-        'qty': scanned_qty
-    })
-    
-    item.scanned = 1
-    
-    return f'Scanned {scanned_qty} {item.uom} for item {item_code} into crate {crate_code}'
-
-def process_scan_as_crates(doc, crates, user, item_code):
-    out = []
-    for crate in crates:
-        result = process_scan_as_crate(doc, crate.crate_code, item_code, user, crate.scanned_qty, from_crates=True)
-        out.append(result)
-
-    return  ' '.join(out)
-    
-def process_scan_as_box(source:dict, identifier_code:str, item_code:str, scanned_qty:int, user:str) -> str:
-    item = next((item for item in source.items if item.item_code == item_code and not item.skipped and not item.scanned), None)
-    if not item:
-        raise pick_stream.exceptions.SystemError(f'Item {item_code} not found in source document. Contact IT.')
-
-    existing_identifier = next((
-        identifier for identifier in source.item_crates
-        if identifier.item_code == item_code and identifier.identifier_code == identifier_code
-    ), None)
-    
-    if existing_identifier:
-        raise pick_stream.exceptions.SystemError(f'Identifier {identifier_code} already exists for item {item_code}. Contact IT.')
-    
-    source.append('item_crates', {
-        'picked_timestamp': frappe.utils.now(),
-        'from_warehouse': item.from_warehouse,
-        'identifier_code': identifier_code,
-        'source_item': item.name,
-        'item_code': item_code,
-        'picking_user': user,
-        'qty': scanned_qty
-    })
-
-    item.scanned = 1
-    item.is_box_item = 1
-    
-    return f'Scanned {scanned_qty} {item.uom} for item {item_code} assigned to identifier {identifier_code}'
-
-def process_scan_as_other(source:dict, identifier_code:str, item_code:str, scanned_qty:int, user:str) -> str:
-    item = next((item for item in source.items if item.item_code == item_code and not item.skipped and not item.scanned), None)
-    if not item:
-        raise pick_stream.exceptions.ValidationError(f'Item {item_code} not found in source document. Contact IT.')
-
-    existing_identifier = next((
-        identifier for identifier in source.item_crates
-        if identifier.item_code == item_code and identifier.identifier_code == identifier_code
-    ), None)
-    
-    if existing_identifier:
-        raise pick_stream.exceptions.ValidationError(f'Identifier {identifier_code} already exists for item {item_code}. Contact IT.')
-    
-    source.append('item_crates', {
-        'picked_timestamp': frappe.utils.now(),
-        'from_warehouse': item.from_warehouse,
-        'identifier_code': identifier_code,
-        'source_item': item.name,
-        'item_code': item_code,
-        'picking_user': user,
-        'qty': scanned_qty
-    })
-
-    item.scanned = 1
-    item.is_other_item = 1
-
-    return f'Scanned {scanned_qty} {item.uom} for item {item_code} assigned to identifier {identifier_code}'
-
-def process_scan_as_skip(source:dict, item_code:str) -> str:
-    item = next((item for item in source.items if item.item_code == item_code and not item.scanned and not item.skipped))
-    item.skipped = 1
-    return f'Skipped item {item_code}'
 
 # Need to rethink this 16/05/2025
 # Made obsolete 27/05/2025

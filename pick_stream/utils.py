@@ -1,9 +1,10 @@
 import json
+import html
 from typing import List, Dict, Any, Optional
 
 import frappe
+from frappe.utils import strip_html
 from frappe.utils.nestedset import get_descendants_of
-from frappe.utils import now_datetime, time_diff_in_hours, get_datetime
 
 import pick_stream
 
@@ -128,20 +129,86 @@ def get_mr_available_item_groups_for_user(
     return out         
 
 
-def check_source_exists(mr_name:str, item_group:str) -> bool:
-    if frappe.db.exists('Source', {
-        'material_request': mr_name,
-        'item_group': item_group
-    }):
-        return True
-    return False
-
-
 def get_source_name(mr_name:str, item_group:str) ->  Optional[str]:
+    """
+    Returns name of Source document tied to a specific Material Request and Item Group.
+
+    Each Material Request can only have one Source per Item Group.  
+    If no matching Source is found, the function returns None.
+    """
     return frappe.db.get_value('Source', {
         'material_request': mr_name,
         'item_group': item_group
     }, 'name')
+
+
+def get_relevant_source_item(source_name: str) -> dict:
+    out = frappe._dict()
+    doc = frappe.get_doc('Source', source_name)
+    try:
+        item = next(item for item in doc.items if not item.scanned and not item.skipped)
+        out.item_code = item.item_code
+        out.description = html.unescape(strip_html(item.description)) if item.description else ''
+        out.uom = item.uom
+        out.from_warehouse = item.from_warehouse
+        out.to_warehouse = doc.to_warehouse
+        # For current item idx / total number of items
+        out.idx = item.idx
+        out.item_count = len(doc.items)
+        duplicate_items = [i for i in doc.items if i.item_code == item.item_code]
+        if len(duplicate_items) > 1:
+            requested_qty = duplicate_items[0].requested_qty
+            # Calculate already picked qty for this item_code
+            already_scanned_qty = sum(i.scanned_qty or 0 for i in duplicate_items if i.scanned)
+            # Calculate remaining qty needed
+            remaining_qty_needed = requested_qty - already_scanned_qty
+            # Use the minimum of available_qty and remaining_qty_needed to prevent over-picking
+            out.requested_qty = min(item.available_qty, remaining_qty_needed)
+        else:
+            # No duplicates - use requested_qty (assuming available_qty >= requested_qty)
+            out.requested_qty = item.requested_qty
+    except StopIteration:
+        # No items found matching the criteria
+        pass
+    return out
+
+
+def create_source(mr_name:str, item_group:str, user:str) -> Dict:
+    source = frappe.new_doc('Source')
+    items = get_material_request_items_details(mr_name, user, item_group)
+    settings = get_settings()
+    default_set_from_warehouse = settings.default_set_from_warehouse
+    source.update({
+        'material_request': mr_name,
+        'from_warehouse': frappe.db.get_value(
+                'Material Request', mr_name, 'set_from_warehouse'
+            ) or 
+            default_set_from_warehouse,
+        'to_warehouse': frappe.db.get_value('Material Request', mr_name, 'set_warehouse'),
+        'item_group': item_group,
+        'user': user
+    })
+    for item in items:
+        source.append('items', {
+            'item_code': item.get('item_code'),
+            'item_name': item.get('item_name'),
+            'item_group': item.get('item_group'),
+            'description': item.get('description'),
+            'from_warehouse': item.get('from_warehouse'),
+            'to_warehouse': item.get('to_warehouse'),
+            'uom': item.get('uom'),
+            'requested_qty': item.get('requested_qty'),
+            'material_request': item.get('material_request'),
+            'material_request_item': item.get('material_request_item')
+        })
+    frappe.db.savepoint('create_source')
+    try:
+        source.insert()
+        frappe.db.commit()
+        return source
+    except Exception as e:
+        frappe.db.rollback()
+        raise pick_stream.exceptions.SystemError(str(e))
 
 
 def get_material_request_item_group_item_quantity(
@@ -196,12 +263,29 @@ def get_material_request_item_group_item_quantity(
         })
 
 
-def get_material_request_items_details(mr_name:str, user:str, selected_item_group:str) -> dict:
+# TODO: Dont hardcode this
+def get_workflow_target_warehouse(user:str, user_branch:str) -> str:
+    """Return target warehouse based on user branch."""
+    match user_branch:
+        case 'King George':
+            return 'KG Stock - JP'
+        case 'JP Mega':
+            return 'Mega Retail - JP'
+        case 'JP Mini':
+            return 'JPMini Stock - JP'
+        case 'Great George':
+            return 'GG Stock - JP'
+        case 'Portsmouth':
+            return 'JPPM Stock - JP'
+        case _:
+            raise pick_stream.exceptions.ValidationError(f"Employee for user '{user}' branch is not valid. Contact HR Department.")
+
+
+def get_material_request_items_details(mr_name:str, user:str, selected_item_group:str) -> Dict:
     pick_stream.validations.validate_exists('User', user)
     pick_stream.validations.validate_exists('Material Request', mr_name)
     pick_stream.validations.validate_user_assigned_to_mr(mr_name, user)
     pick_stream.validations.validate_user_assigned_to_item_group(user, selected_item_group)
-
     return frappe.db.sql("""
         SELECT 
             mri.item_code,
@@ -223,6 +307,7 @@ def get_material_request_items_details(mr_name:str, user:str, selected_item_grou
         'mr_name': mr_name,
         'selected_item_group': selected_item_group
     }, as_dict=True) or {}
+
 
 def get_workflow_details(target_warehouse:str=None):
     """Will return all workflows if target warehouse is not passed (For privileged users)"""

@@ -18,10 +18,16 @@ def generate_response(
     frappe.response['http_status_code'] = status
     if message:
         if isinstance(message, Exception):
-            error = frappe._dict({'error_type': str(type(message).__name__), 'error_message': str(message)})
+            error = frappe._dict({
+                'error_type': str(type(message).__name__),
+                'error_message': str(message)
+            })
             response.error = error
         else:
-            sanitized_message = BeautifulSoup(message, 'html.parser').get_text()
+            sanitized_message = BeautifulSoup(
+                message,
+                'html.parser'
+            ).get_text()
             response.message = sanitized_message
     return response
 
@@ -38,7 +44,22 @@ def exception_handler(e: Exception) -> None:
             location = f'{trimmed_path} in {trace.name}'
             break
     log_title = f'{exception_name} at {location}'
-    frappe.log_error(title=log_title, message=frappe.get_traceback())
+    request_data = {}
+    if hasattr(frappe.local, 'request'):
+        request = frappe.local.request
+        request_data = {
+            'method': request.method,
+            'path': request.path,
+            'headers': dict(request.headers),
+            'args': dict(request.args),
+            'form': dict(request.form),
+            'json': request.get_json(silent=True),
+        }
+    error_message = f'{frappe.get_traceback()}\n\n--- Request Data ---\n{frappe.as_json(request_data, indent=2)}'
+    frappe.log_error(
+        title=log_title,
+        message=error_message
+    )
     status_code = getattr(e, 'http_status_code', 500)
     return generate_response(status_code, e)
 

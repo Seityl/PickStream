@@ -1,6 +1,8 @@
 import frappe
 from typing import Any, Dict
-from pick_stream import api_utils, core, utils 
+
+from pick_stream import core, utils 
+from pick_stream.api_utils import handler, generate_response 
 
 
 # API Docs: \\storage\it\IT_Vault\IT_Team_Vault\06_Projects\Current Projects\Pick Stream\Documentation\API 
@@ -10,14 +12,14 @@ from pick_stream import api_utils, core, utils
 # Picking Endpoints
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_material_request_list_view(user:str) -> Dict:
     view_details = core.get_user_material_requests(user)
-    return api_utils.generate_response(200, None, view_details)
+    return generate_response(200, None, view_details)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_material_request_available_item_groups_view(
         user:str,
         mr_name:str
@@ -26,11 +28,11 @@ def get_material_request_available_item_groups_view(
         mr_name,
         user
     )
-    return api_utils.generate_response(200, None, view_details)
+    return generate_response(200, None, view_details)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_material_request_picking_view(
         user:str, 
         mr_name:str,
@@ -41,11 +43,11 @@ def get_material_request_picking_view(
         user,
         item_group
     )
-    return api_utils.generate_response(200, None, view_details)
+    return generate_response(200, None, view_details)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def submit_scan_details(
     user:str,
     mr_name:str,
@@ -70,7 +72,7 @@ def submit_scan_details(
         as_other,
         crate_code
     )
-    return api_utils.generate_response(200, None, result)
+    return generate_response(200, None, result)
 
 # 
 # Verification Endpoints
@@ -78,15 +80,15 @@ def submit_scan_details(
 
 # TODO: Add docs
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_verification_list_view(user:str) -> Dict:
     verification_list = core.get_verification_list(user)
-    return api_utils.generate_response(200, None, verification_list)
+    return generate_response(200, None, verification_list)
 
 
 # TODO: Add docs
 @frappe.whitelist()
-@api_utils.handler(methods=['POST'])
+@handler(methods=['POST'])
 def submit_verification_request(
     user:str,
     items:Any,
@@ -99,7 +101,7 @@ def submit_verification_request(
         crate_code,
         identifier_code
     )
-    return api_utils.generate_response(200, None, verification_request)
+    return generate_response(200, None, verification_request)
 
 # 
 # Transit Endpoints
@@ -107,15 +109,15 @@ def submit_verification_request(
 
 # TODO: Add docs
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_transit_list_view(user:str) -> Dict:
     transit_list = core.get_transit_list(user)
-    return api_utils.generate_response(200, None, transit_list)
+    return generate_response(200, None, transit_list)
 
 
 # TODO: Add docs
 @frappe.whitelist()
-@api_utils.handler(methods=['POST'])
+@handler(methods=['POST'])
 def submit_transit_request(
     user:str,
     to_warehouse:str,
@@ -130,7 +132,7 @@ def submit_transit_request(
         crate_codes,
         identifier_codes
     )
-    return api_utils.generate_response(200, None, transit_request)
+    return generate_response(200, None, transit_request)
 
 # 
 # Receiving Endpoints
@@ -138,15 +140,15 @@ def submit_transit_request(
 
 # TODO: Add docs
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_receiving_list_view(user:str) -> Dict:
     receiving_list = core.get_receiving_list(user)
-    return api_utils.generate_response(200, None, receiving_list)
+    return generate_response(200, None, receiving_list)
 
 
 # TODO: Add docs
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def submit_receiving_request(
     user:str,
     code:str,
@@ -159,96 +161,96 @@ def submit_receiving_request(
         to_warehouse,
         from_warehouse
     )
-    return api_utils.generate_response(200, None, receiving_request)
+    return generate_response(200, None, receiving_request)
 
 
 #------------------- 
 # Tools Endpoints
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_crate_check(crate_code:str) -> Dict:
     """Returns details of specified crate"""
     identifier_list = core.get_identifier_list(user, limit)
-    return api_utils.generate_response(200, None, identifier_list)
+    return generate_response(200, None, identifier_list)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_item_identifier_list(user, limit:int=20) -> Dict:
     """Returns list of associated details"""
     identifier_list = core.get_identifier_list(user, limit)
-    return api_utils.generate_response(200, None, identifier_list)
+    return generate_response(200, None, identifier_list)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_item_identifier_details(item_identifier:str) -> Dict:
     """Returns associated details of item identifier"""
     identifier_details = core.get_identifier_details(item_identifier)
-    return api_utils.generate_response(200, None, identifier_details)
+    return generate_response(200, None, identifier_details)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_user_active_crate_details(user:str) -> Dict:
     crate_details = core.get_user_crate_details(user)
-    return api_utils.generate_response(200, None, crate_details)
+    return generate_response(200, None, crate_details)
 
 
 #------------------- 
 # Utility Endpoints
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_user_active_crate(user:str) -> Dict:
     active_crate = core.get_user_crate(user)
-    return api_utils.generate_response(200, None, active_crate)
+    return generate_response(200, None, active_crate)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_user_workflow_access(user:str) -> Dict:
     workflow_access = utils.get_user_workflow_access(user)
-    return api_utils.generate_response(200, None, workflow_access)
+    return generate_response(200, None, workflow_access)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_user_profile(user:str) -> Dict:
     user_profile = utils.get_user_profile(user)
-    return api_utils.generate_response(200, None, user_profile)
+    return generate_response(200, None, user_profile)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_user_notifications(user:str) -> Dict:
     user_notifications = utils.get_user_notifications(user)
-    return api_utils.generate_response(200, None, user_notifications)
+    return generate_response(200, None, user_notifications)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def validate_item_against_barcode(item_code:str, barcode:str) -> Dict:
     if core.check_item_against_barcode(item_code, barcode):
-        return api_utils.generate_response(200, None, True)
-    return api_utils.generate_response(200, None, False)
+        return generate_response(200, None, True)
+    return generate_response(200, None, False)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def validate_crate(crate_code:str, user:str) -> Dict:
     if utils.check_crate_availability(crate_code, user):
-        return api_utils.generate_response(200, None, True)
-    return api_utils.generate_response(200, None, False)
+        return generate_response(200, None, True)
+    return generate_response(200, None, False)
 
 
 # TODO: Add docs
 @frappe.whitelist()
-@api_utils.handler(methods=['POST'])
+@handler(methods=['POST'])
 def submit_close_crate_request(crate_code:str, items:Any=[]) -> Dict:
     close_crate = core.close_crate(crate_code, items=items, commit=True)
-    return api_utils.generate_response(200, None, close_crate)
+    return generate_response(200, None, close_crate)
 
 
 # 
@@ -256,14 +258,14 @@ def submit_close_crate_request(crate_code:str, items:Any=[]) -> Dict:
 # 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET', 'POST'])
+@handler(methods=['GET', 'POST'])
 def get_printer_list_view() -> Dict:
     printers = core.get_printers()
-    return api_utils.generate_response(200, None, printers)
+    return generate_response(200, None, printers)
 
 
 @frappe.whitelist()
-@api_utils.handler(methods=['GET', 'POST'])
+@handler(methods=['GET', 'POST'])
 def submit_print_request(
     printer:str,
     mr_name:str=None,
@@ -275,14 +277,14 @@ def submit_print_request(
     crate_code:str=None
 ) -> Dict:
     message = core.process_print_request(printer, mr_name, item_code, item_type, user, qty, item_identifier, crate_code)
-    return api_utils.generate_response(200, None, message)
+    return generate_response(200, None, message)
     
 #=====# UTILS #=================================================================#
 
 
 # TODO: Add docs
 @frappe.whitelist()
-@api_utils.handler(methods=['GET'])
+@handler(methods=['GET'])
 def get_crate_details(
     user:str,
     crate_code:str,
@@ -297,7 +299,7 @@ def get_crate_details(
         to_transit,
         to_receive
     )
-    return api_utils.generate_response(200, None, crate_details)
+    return generate_response(200, None, crate_details)
 
 #=====# ----- #=================================================================#
 
@@ -325,14 +327,14 @@ def get_crate_details(
 
 
 # @frappe.whitelist()
-# @api_utils.handler(methods=['GET'])
+# @handler(methods=['GET'])
 # def get_user_crate_list(user:str) -> Dict:
 #     """Returns currently picking crates for associated user"""
 #     user_crate_details = get_user_crate_details(user)
-#     return api_utils.generate_response(200, None, user_crate_details)
+#     return generate_response(200, None, user_crate_details)
 
 # @frappe.whitelist()
-# @api_utils.handler(methods=['GET'])
+# @handler(methods=['GET'])
 # def get_user_crate_items(user:str, crate_code:str) -> Dict:
 #     """Returns items currently in crate"""
 #     user_crate_details = get_user_crate_items_details(user, crate_code)
@@ -340,9 +342,9 @@ def get_crate_details(
 
 # Made obsolete by get_material_request_available_item_groups_view() 14/05/2025
 # @frappe.whitelist()
-# @api_utils.handler(methods=['GET'])
+# @handler(methods=['GET'])
 # def get_material_request_item_group_view(user:str, mr_name:str, item_group:str) -> Dict:
 #     """Retrieve item group view for Material Request based on the specified user and item group"""
 #     view_details = get_material_request_item_group_view_details(mr_name, user, item_group)
-#     return api_utils.generate_response(200, None, view_details)
-#     return api_utils.generate_response(200, None, user_crate_details)
+#     return generate_response(200, None, view_details)
+#     return generate_response(200, None, user_crate_details)
