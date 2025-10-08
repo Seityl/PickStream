@@ -519,12 +519,24 @@ def process_scan_as_crate(
     ) -> str:
     if from_crates:
         item = next(
-            (item for item in source.items if item.item_code == item_code and not item.skipped),
+            (item for item in source.items 
+             if item.item_code == item_code 
+             and not item.skipped 
+            and (item.scanned_qty or 0) < item.requested_qty
+            and not any(  # Check this source_item isn't already in this crate
+                    crate.crate_code == crate_code 
+                    and crate.source_item == item.name 
+                    for crate in source.item_crates
+                )
+            ),
             None
         )
     else:
         item = next(
-            (item for item in source.items if item.item_code == item_code and not item.skipped and not item.scanned),
+            (item for item in source.items 
+             if item.item_code == item_code 
+             and not item.skipped 
+             and not item.scanned),
             None
         )
     if not item:
