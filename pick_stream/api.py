@@ -204,7 +204,7 @@ def get_user_active_crate_details(user:str) -> Dict:
 @frappe.whitelist()
 @handler(methods=['GET'])
 def get_user_active_crate(user:str) -> Dict:
-    active_crate = core.get_user_crate(user)
+    active_crate = utils.get_user_crate(user)
     return generate_response(200, None, active_crate)
 
 
@@ -232,7 +232,7 @@ def get_user_notifications(user:str) -> Dict:
 @frappe.whitelist()
 @handler(methods=['GET'])
 def validate_item_against_barcode(item_code:str, barcode:str) -> Dict:
-    if core.check_item_against_barcode(item_code, barcode):
+    if utils.check_item_against_barcode(item_code, barcode):
         return generate_response(200, None, True)
     return generate_response(200, None, False)
 

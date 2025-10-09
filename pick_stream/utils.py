@@ -309,6 +309,55 @@ def get_material_request_items_details(mr_name:str, user:str, selected_item_grou
     }, as_dict=True) or {}
 
 
+def get_user_crate(user: str) -> Optional[str]:
+    pick_stream.validations.validate_exists('User', user)
+    all_crates = frappe.get_all(
+        'Item Crates',
+        fields=['crate_code', 'modified'],
+        filters=[
+            ['parenttype', '=', 'Source'], 
+            ['crate_code', 'is', 'set'],
+            ['picking_user', '=', user],
+            ['crate_closed', '=', 0],
+            ['transited', '=', 0],
+            ['verified', '=', 0],
+            ['received', '=', 0]
+        ],
+        order_by='modified desc'
+    )
+    # Get unique crate codes
+    unique_crates = {}
+    for crate in all_crates:
+        crate_code = crate['crate_code']
+        if crate_code not in unique_crates:
+            unique_crates[crate_code] = crate
+    matching_crates = list(unique_crates.values())
+    # No active crates found
+    if not matching_crates:
+        return ''
+    # Exactly one active crate - this is the expected normal state
+    if len(matching_crates) == 1:
+        return matching_crates[0]['crate_code']
+    # Multiple active crates found - this is an error condition
+    # List all the crates to help with debugging
+    crate_codes = [c['crate_code'] for c in matching_crates]
+    crate_list = ', '.join(crate_codes)
+    raise pick_stream.exceptions.SystemError(
+        f"User '{user}' has {len(matching_crates)} active open crates ({crate_list}). "
+        f'Only one active crate is allowed at a time. Please close all but one crate before continuing. '
+        f'Contact IT for assistance.'
+    )
+
+
+def check_item_against_barcode(item_code:str, barcode:str) -> bool:
+    pick_stream.validations.validate_exists('Item', item_code)
+    pick_stream.validations.validate_exists('Item Barcode', barcode, child=True, field='barcode')
+    parent = frappe.db.get_value('Item Barcode', {'barcode': barcode}, 'parent')
+    if parent != item_code:
+        return False
+    return True
+
+
 def get_workflow_details(target_warehouse:str=None):
     """Will return all workflows if target warehouse is not passed (For privileged users)"""
     settings = pick_stream.utils.get_settings()
@@ -533,63 +582,92 @@ def check_transit_required(picking_warehouse_stores, from_warehouse, to_warehous
         return True
     return source_warehouse_store != to_warehouse
 
+
 # TODO: Get Picking User by checking item crates child table
 def check_crate_availability(crate_code: str, user: str, from_stream: bool = False) -> bool:
+    """Check if a crate is available for use by a specific user"""
     pick_stream.validations.validate_exists('Crate', crate_code)
     if not from_stream: 
         pick_stream.validations.validate_exists('User', user)
-        
     crate_status = frappe.db.get_value('Crate', crate_code, 'status')
-    
-    if crate_status != 'Available':
+    # Crate is available - anyone can use it
+    if crate_status == 'Available':
+        return True
+    # Crate is being picked - check if it's this user or another user
+    if crate_status == 'Picking':
         crate_picking_user = get_crate_picking_user(crate_code)
+        # If no picking user found but status is Picking, it's a data integrity issue
+        # but we should just return False rather than break the flow
         if not crate_picking_user:
-            raise pick_stream.exceptions.SystemError((
-                f"Crate '{crate_code}' is not available and has no picking user. Contact IT."
-            ))
-        
-        if crate_status == 'Picking' and crate_picking_user != user:
-            raise pick_stream.exceptions.ValidationError((
+            frappe.log_error(
+                title=f'Crate Status Inconsistency: {crate_code}',
+                message=f"Crate '{crate_code}' has status 'Picking' but no active picking user found in Item Crates."
+            )
+            return False
+        # Crate is being picked by another user - deny access with clear error
+        if crate_picking_user != user:
+            raise pick_stream.exceptions.ValidationError(
                 f"Crate '{crate_code}' is already in use by {crate_picking_user}. "
-                "Contact IT if you believe this is an error."
-            ))
-
-        if crate_status == 'Picking' and crate_picking_user == user:
-            return True
-
-        return False
+                'Contact IT if you believe this is an error.'
+            )
+        # Crate is being picked by the same user - allow access
+        return True
+    # For all other statuses (Waiting, In Transit, Completed, etc.), crate is not available
+    # This includes closed crates, transited crates, etc.
+    return False
     
-    return True
 
 def get_crate_picking_user(crate_code):
-    """Returns current picking user for crate"""
+    """
+    Get the current picking user for a crate by querying the Item Crates child table.
+    
+    This function finds the active picking user by looking for open (unclosed, 
+    unverified, unreceived) items in the Item Crates table associated with the crate.
+    
+    Business Logic:
+    - Only considers items that haven't been closed, transited, verified, or received
+    - If multiple users are found (data integrity issue), returns the most recent
+    - If multiple users found, automatically closes the crate to prevent further issues
+    """
     all_picking_users = frappe.get_all(
         'Item Crates',
         fields=['picking_user', 'crate_code', 'modified'],
         filters=[
             ['crate_code', '=', crate_code],
-            ['parenttype', '=', 'Source'], 
+            ['parenttype', '=', 'Source'],
             ['picking_user', 'is', 'set'],
-            ['crate_closed', '=', 0],
-            ['transited', '=', 0],
-            ['verified', '=', 0],
-            ['received', '=', 0]
+            ['crate_closed', '=', 0],   # Not closed
+            ['transited', '=', 0],      # Not transited
+            ['verified', '=', 0],       # Not verified
+            ['received', '=', 0]        # Not received
         ]
     )
+    # No active items found - crate has no picking user
     if not all_picking_users:
         return None
-        
+    # Deduplicate by (crate_code, picking_user) and keep most recent
     user_dict = {}
     for record in all_picking_users:
         key = (record['crate_code'], record['picking_user'])
         if key not in user_dict or record['modified'] > user_dict[key]['modified']:
             user_dict[key] = record
-    
-    # There should only be one picking user at a given time for a crate
-    # If multiple are found then close the crate to ensure forward correctedness
     unique_records = list(user_dict.values())
+    # Data integrity issue: Multiple users have open items in the same crate
+    # This should NEVER happen - close the crate to prevent further issues
     if len(unique_records) > 1:
-        pick_stream.core.close_crate(crate_code, commit=True)
-    
+        frappe.log_error(
+            title=f'Multiple Picking Users Found for Crate {crate_code}',
+            message=f'Found {len(unique_records)} picking users for crate {crate_code}: '
+                   f"{[r['picking_user'] for r in unique_records]}. Auto-closing crate."
+        )
+        try:
+            pick_stream.core.close_crate(crate_code, commit=True)
+        except Exception as e:
+            # Log but don't fail if close_crate fails - we still want to return a user
+            frappe.log_error(
+                title=f"Failed to Auto-Close Crate {crate_code}",
+                message=f"Error while auto-closing crate with multiple users: {str(e)}"
+            )
+    # Return the most recent picking user
     most_recent_record = max(unique_records, key=lambda x: x['modified'])
     return most_recent_record['picking_user']

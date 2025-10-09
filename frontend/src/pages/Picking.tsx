@@ -17,7 +17,6 @@ import ScanAsBoxModal from '../components/ScanAsBoxModal';
 import ScanAsOtherModal from '../components/ScanAsOtherModal';
 import { toast } from 'react-toastify';
 
-// Define proper types
 type SourceItem = {
   item_code: string;
   description: string;
@@ -66,6 +65,7 @@ function Picking() {
   // State management
   const [crateCode, setCrateCode] = useState<string | null>(sourceItem.crate_code || null);
   const [hasCrateCode, setHasCrateCode] = useState<boolean>(Boolean(crateCode));
+  const [crateScanInput, setCrateScanInput] = useState<string>(''); // Separate state for input field
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [itembarcode, setItemBarcode] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -106,27 +106,42 @@ function Picking() {
   }, [activeModal, getUserActiveCrate]);
 
   // Validate crate
-  const validateCrate = useCallback(async (crateCode: string): Promise<boolean> => {
-    if (!crateCode) return false;
+  const validateCrate = useCallback(async (crateCodeToValidate: string): Promise<boolean> => {
+    if (!crateCodeToValidate) return false;
     
     setIsLoading(true);
     try {
       const user = await getCurrentUser();
       const params = {
         user,
-        crate_code: crateCode
+        crate_code: crateCodeToValidate
       };
 
       const response = await frappeClient.get('pick_stream.api.validate_crate', params);
 
       if (response.message.data) {
-        searchParams.set('crate_code', crateCode);
+        // Crate is available - set it as active and proceed
+        setCrateCode(crateCodeToValidate);
         setHasCrateCode(true);
+        setCrateScanInput(''); // Clear the input field
+        searchParams.set('crate_code', crateCodeToValidate);
         return true;
+      } else {
+        // Crate exists but is not available (closed, in transit, etc.)
+        toast.warning(
+          `Crate '${crateCodeToValidate}' is not available for use. Please scan a different crate.`,
+          TOAST_CONFIG
+        );
+        // Clear only the input field, preserve active crate state
+        setCrateScanInput('');
+        return false;
       }
-      return false;
     } catch (err: any) {
-      return handleError(err);
+      // This handles validation errors (e.g., crate in use by another user)
+      handleError(err);
+      // Clear only the input field, preserve active crate state
+      setCrateScanInput('');
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -215,6 +230,14 @@ function Picking() {
 
       const response = await frappeClient.get('pick_stream.api.submit_scan_details', params);
       
+      // CRITICAL FIX: Update crate state after submitting multiple crates
+      // When scanning with multiple crates, the last crate becomes the active one
+      if (itemType === "crates" && crates && crates.length > 0) {
+        const activeCrate = crates[crates.length - 1].crate_code;
+        setCrateCode(activeCrate);
+        setHasCrateCode(true);
+      }
+      
       if (response.message.data.complete && (itemType !== "box" && itemType !== "other")) {
         navigate(`/pick_stream/material-requests/${materialRequest}`);
         return;
@@ -296,7 +319,9 @@ function Picking() {
 
         <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
           <p className="text-sm text-amber-800">
-            You have no active crate currently. Scan a crate to set it active.
+            {crateCode 
+              ? `Current active crate: ${crateCode}. Scan a new crate to change it.`
+              : 'You have no active crate currently. Scan a crate to set it active.'}
           </p>
         </div>
 
@@ -307,16 +332,17 @@ function Picking() {
             id="crate_code"
             type="text"
             placeholder="Enter crate code"
-            value={crateCode || ''}
-            onChange={(e) => setCrateCode(e.target.value)}
+            value={crateScanInput}
+            onChange={(e) => setCrateScanInput(e.target.value)}
+            autoFocus
           />
         </div>
 
         <button 
           className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
           type="submit" 
-          onClick={() => crateCode && validateCrate(crateCode)}
-          disabled={isLoading || !crateCode}
+          onClick={() => crateScanInput && validateCrate(crateScanInput)}
+          disabled={isLoading || !crateScanInput}
         >
           {isLoading ? (
             <div className="flex items-center space-x-2">

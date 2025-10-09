@@ -29,14 +29,6 @@ def validate_item_type(item_type:str, settings:dict) -> None:
     item_types = [item.item_type for item in settings.item_types]
     if item_type not in item_types:
         raise pick_stream.exceptions.ValidationError(f"Item type '{item_type}' not in valid item types. Contact IT.")
-    
-def check_item_against_barcode(item_code:str, barcode:str) -> bool:
-    pick_stream.validations.validate_exists('Item', item_code)
-    pick_stream.validations.validate_exists('Item Barcode', barcode, child=True, field='barcode')
-    parent = frappe.db.get_value('Item Barcode', {'barcode': barcode}, 'parent')
-    if parent != item_code:
-        return False
-    return True
 
 def check_material_request_item_group_in_progress(mr_name:str, item_group:str) -> dict:
     source_name = pick_stream.utils.get_source_name(mr_name, item_group)
@@ -495,13 +487,46 @@ def process_scan_details(
     if not doc.scan_pointer:
         doc.scan_pointer = 0
     doc.scan_pointer += 1
+    # When scanning with multiple crates, mark all except the last as closed
+    # BEFORE saving. This prevents the "partially fulfilled crate" validation error.
+    # We mark them in memory first, then save this Source doc, then close them in other
+    # Source docs that may reference these crates.
+    crates_to_close = []
+    if crates and len(crates) > 1:
+        crates_to_close = [crate.crate_code for crate in crates[:-1]]
+        # Mark items as closed in THIS document's memory
+        for item_crate in doc.item_crates:
+            if item_crate.crate_code in crates_to_close and not item_crate.crate_closed:
+                item_crate.crate_closed = 1
+                item_crate.crate_closed_timestamp = frappe.utils.now()
     frappe.db.savepoint('process_scan_details')
     try:
+        # Save this Source document first with crates marked as closed
         doc.save()
         frappe.db.commit()
-        if crates:
-            for crate in crates[:-1]:
-                close_crate(crate.crate_code, commit=True)
+        # Now close these crates in OTHER Source documents that reference them
+        # We need to do this AFTER our save to avoid double-processing
+        if crates_to_close:
+            for crate_code in crates_to_close:
+                # Query for OTHER Source documents (excluding the one we just saved)
+                open_crate_items = frappe.db.get_all('Item Crates',
+                    filters={
+                        'crate_code': crate_code,
+                        'parenttype': 'Source',
+                        'crate_closed': '0',
+                        'parent': ['!=', doc.name] # Exclude current document
+                    },
+                    fields=['parent'],
+                    distinct=True
+                )
+                # Only call close_crate if there are OTHER sources with this crate open
+                if open_crate_items:
+                    try:
+                        close_crate(crate_code, commit=True)
+                    except pick_stream.exceptions.SystemError as e:
+                        # If crate is already closed, that's fine - continue
+                        if 'already closed' not in str(e).lower():
+                            raise
     except Exception as e:
         frappe.db.rollback()
         raise pick_stream.exceptions.SystemError(str(e))
@@ -517,13 +542,28 @@ def process_scan_as_crate(
         scanned_qty:int,
         from_crates:bool=False
     ) -> str:
+    if scanned_qty <= 0:
+        raise pick_stream.exceptions.ValidationError(
+            f'Scanned quantity must be greater than 0 in crate {crate_code}'
+        )
     if from_crates:
+        # Calculate pending quantities already in item_crates for this transaction
+        # These quantities are not yet reflected in source_item.scanned_qty
+        pending_qty_map = {}
+        for crate in source.item_crates:
+            if crate.item_code == item_code:
+                pending_qty_map.setdefault(crate.source_item, 0)
+                pending_qty_map[crate.source_item] += crate.qty
+        # Find next available Source Item with remaining capacity
+        # Must account for BOTH scanned_qty and pending quantities
         item = next(
             (item for item in source.items 
              if item.item_code == item_code 
              and not item.skipped 
-            and (item.scanned_qty or 0) < item.requested_qty
-            and not any(  # Check this source_item isn't already in this crate
+            # Add pending quantities to scanned_qty for accurate capacity check
+            and ((item.scanned_qty or 0) + pending_qty_map.get(item.name, 0)) < item.requested_qty
+            # Ensure this source_item isn't already in this specific crate
+            and not any(
                     crate.crate_code == crate_code 
                     and crate.source_item == item.name 
                     for crate in source.item_crates
@@ -540,6 +580,7 @@ def process_scan_as_crate(
             None
         )
     if not item:
+        frappe.log_error('if not item', 'if not item')
         raise pick_stream.exceptions.SystemError(
             f'Item {item_code} not found in source document. Contact IT.'
         )
@@ -649,42 +690,8 @@ def process_scan_as_skip(source:Dict, item_code:str) -> str:
     )
     item.skipped = 1
     return f'Skipped item {item_code}'
-
-
-def get_user_crate(user: str) -> Optional[str]:
-    pick_stream.validations.validate_exists('User', user)
-    all_crates  = frappe.get_all(
-        'Item Crates',
-        fields=['crate_code'],
-        filters=[
-            ['parenttype', '=', 'Source'], 
-            ['crate_code', 'is', 'set'],
-            ['picking_user', '=', user],
-            ['crate_closed', '=', 0],
-            ['transited', '=', 0],
-            ['verified', '=', 0],
-            ['received', '=', 0]
-        ],
-        distinct=True
-    )
-    crate_dict = {}
-    for crate in all_crates:
-        crate_code = crate['crate_code']
-        if crate_code not in crate_dict or crate['modified'] > crate_dict[crate_code]['modified']:
-            crate_dict[crate_code] = crate
-    matching_crates = list(crate_dict.values())
-    if len(matching_crates) > 1:
-        matching_crates.sort(key=lambda x: x['modified'])
-        crates_to_close = matching_crates[:-1]
-        most_recent_crate = matching_crates[-1]['crate_code']
-        for crate_data in crates_to_close:
-            crate_code = crate_data['crate_code']
-            close_crate(crate_code, commit=True)
-            frappe.log_error('close_crate(crate_code, commit=True)')
-        return most_recent_crate
-    return matching_crates[0]['crate_code'] if matching_crates else ''
-
     
+
 def source_is_complete(source_name: str) -> bool:
     doc = frappe.get_doc('Source', source_name)
     return not any(not item.scanned and not item.skipped for item in doc.items) 

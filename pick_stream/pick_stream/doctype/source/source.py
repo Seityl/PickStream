@@ -206,23 +206,62 @@ class Source(Document):
         return crates_status
     
     def validate_stock_qty(self):
+        """
+        Validates that scanned quantities don't exceed allocated quantities for each Source Item row.
+        
+        This method is called AFTER validate_scanned_qty() has recalculated scanned_qty from item_crates,
+        so it validates the final calculated quantities against what was allocated during set_item_locations().
+        
+        Validates against available_qty (allocated at creation), not live bin qty (prevents race conditions).
+        """
         for row in self.items:
+            # Skip rows with no scanned quantity
             if not row.scanned_qty:
                 continue
-            bin_qty = frappe.db.get_value(
-                'Bin', 
-                {
-                    'item_code': row.item_code,
-                    'warehouse': row.from_warehouse
-                }, 
-                'actual_qty'
-            )
-            if row.scanned_qty > flt(bin_qty):
-                raise pick_stream.exceptions.ValidationError(
-                    f'Scanned qty {row.scanned_qty} exceeds available qty {bin_qty} for item {row.item_code}'
+            # Use allocated quantity (set during set_item_locations) as the validation baseline
+            allocated_qty = flt(row.available_qty) if row.available_qty else 0
+            scanned_qty = flt(row.scanned_qty)
+            # Check if scanned exceeds allocated
+            if scanned_qty > allocated_qty:
+                # Get detailed breakdown of what's in this Source Item
+                crate_details = []
+                for crate in self.item_crates:
+                    if crate.source_item == row.name:
+                        crate_details.append({
+                            'crate': crate.crate_code or crate.identifier_code,
+                            'qty': crate.qty,
+                            'warehouse': crate.from_warehouse
+                        })
+                # Format detailed message for error log
+                crate_list = '\n'.join([
+                    f"  - {c['crate']}: {c['qty']} (from {c['warehouse']})"
+                    for c in crate_details
+                ]) if crate_details else '  No crates found'
+                detailed_error_msg = (
+                    f'Validation Error: Scanned quantity exceeds allocated quantity\n\n'
+                    f'Item: {row.item_code}\n'
+                    f'Warehouse: {row.from_warehouse}\n'
+                    f'Source Item: {row.name}\n'
+                    f'Scanned: {scanned_qty} {row.uom}\n'
+                    f'Allocated: {allocated_qty} {row.uom}\n'
+                    f'Excess: {scanned_qty - allocated_qty} {row.uom}\n\n'
+                    f'Crates/Identifiers assigned to this Source Item:\n{crate_list}\n\n'
+                    f'This error indicates that items from multiple warehouses were incorrectly '
+                    f'assigned to the same Source Item row. This is a system error.'
                 )
-            if row.available_qty != flt(bin_qty):
-                row.available_qty = flt(bin_qty)
+                # Log detailed error for investigation
+                frappe.log_error(
+                    title=f'Stock Validation Failed - {row.item_code} - {row.from_warehouse}',
+                    message=detailed_error_msg + '\n\n' + 
+                        f'Full Source Item Data:\n{frappe.as_json(row.as_dict(), indent=2)}\n\n'
+                        f'Item Crates for this source_item:\n{frappe.as_json(crate_details, indent=2)}'
+                )
+                # Simple user-facing error message
+                user_error_msg = (
+                    f'Scanned quantity ({scanned_qty} {row.uom}) exceeds available quantity '
+                    f'({allocated_qty} {row.uom}) for item {row.item_code} from {row.from_warehouse}. '
+                )
+                raise pick_stream.exceptions.ValidationError(user_error_msg)
 
     def validate_scanned_qty(self):
         item_qty_map = {}
@@ -235,9 +274,9 @@ class Source(Document):
             row.scanned_qty = item_qty_map.get(row.name, 0)
             if row.scanned_qty == 0:
                 continue
-            if row.scanned and row.scanned_qty <= 0:
+            if row.scanned and row.scanned_qty < 0:
                 raise pick_stream.exceptions.ValidationError(
-                    f'Scanned qty {row.scanned_qty} cannot be less than or equal to 0 for item {row.item_code}'
+                    f'Scanned qty {row.scanned_qty} cannot be less than 0 for item {row.item_code}'
                 )
             if row.scanned and row.scanned_qty > row.requested_qty:
                 raise pick_stream.exceptions.ValidationError(
