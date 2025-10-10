@@ -391,7 +391,7 @@ def process_scan_details(
     skipped:bool = False,
     as_other:bool = False,
     crate_code:str = None
-) -> dict:
+) -> Dict:
     pick_stream.validations.validate_scan_params(scanned_qty, crate_code, as_box, as_other, skipped, crates)
     if crate_code:
         pick_stream.validations.validate_exists('Crate', crate_code)
@@ -527,8 +527,14 @@ def process_scan_details(
                         # If crate is already closed, that's fine - continue
                         if 'already closed' not in str(e).lower():
                             raise
+    except pick_stream.exceptions.ValidationError as e:
+        frappe.db.rollback()
+        # Re-raise validation errors with the original message
+        # These are user-facing errors that should be displayed as-is
+        raise
     except Exception as e:
         frappe.db.rollback()
+        # Wrap other exceptions as system errors
         raise pick_stream.exceptions.SystemError(str(e))
     out.complete = frappe.db.get_value('Source', doc.name, 'status') == 'Completed'
     return out
@@ -555,7 +561,7 @@ def process_scan_as_crate(
                 pending_qty_map.setdefault(crate.source_item, 0)
                 pending_qty_map[crate.source_item] += crate.qty
         # Find next available Source Item with remaining capacity
-        # Must account for BOTH scanned_qty and pending quantities
+        # Account for BOTH scanned_qty and pending quantities
         item = next(
             (item for item in source.items 
              if item.item_code == item_code 
@@ -574,16 +580,71 @@ def process_scan_as_crate(
     else:
         item = next(
             (item for item in source.items 
-             if item.item_code == item_code 
-             and not item.skipped 
-             and not item.scanned),
+            if item.item_code == item_code 
+            and not item.skipped 
+            and not item.scanned),
             None
         )
     if not item:
-        frappe.log_error('if not item', 'if not item')
-        raise pick_stream.exceptions.SystemError(
-            f'Item {item_code} not found in source document. Contact IT.'
-        )
+        # Provide detailed error message for debugging
+        available_items = [
+            item for item in source.items 
+            if item.item_code == item_code and not item.skipped
+        ]
+        if not available_items:
+            raise pick_stream.exceptions.ValidationError(
+                f'No source items found for {item_code}. Item may have been skipped or does not exist in this source.'
+            )
+        # Calculate total scanned/pending vs requested for better error message
+        if from_crates:
+            pending_qty_map = {}
+            for crate in source.item_crates:
+                if crate.item_code == item_code:
+                    pending_qty_map.setdefault(crate.source_item, 0)
+                    pending_qty_map[crate.source_item] += crate.qty
+            total_pending = sum(pending_qty_map.values())
+            total_scanned = sum((item.scanned_qty or 0) for item in available_items)
+            total_requested = sum(item.requested_qty for item in available_items)
+            total_in_crates = total_scanned + total_pending
+            raise pick_stream.exceptions.ValidationError(
+                f'Cannot scan {scanned_qty} more units of {item_code} into crate {crate_code}. '
+                f'Total requested: {total_requested}, already in crates: {total_in_crates}. '
+                f'Remaining units: {max(0, total_requested - total_in_crates)} units.'
+            )
+        else:
+            raise pick_stream.exceptions.SystemError(
+                f'Item {item_code} not found in source document. Contact IT.'
+            )
+    # Validate we're not exceeding capacity with this scan
+    if from_crates:
+        # Note: item.scanned_qty is already calculated from item_crates in validate_scanned_qty()
+        # during the before_save hook, so it reflects all crates already added to this Source.
+        # We just need to check if adding this new scan would exceed limits.
+        total_after_scan = (item.scanned_qty or 0) + scanned_qty
+        if total_after_scan > item.requested_qty:
+            raise pick_stream.exceptions.ValidationError(
+                f'Cannot scan {scanned_qty} units into crate {crate_code}. '
+                f'This would exceed requested quantity of {item.requested_qty} '
+                f'(current: {item.scanned_qty or 0}, attempting to add: {scanned_qty}).'
+            )
+        # Check against allocated quantity (available_qty) which was set during location allocation
+        # This prevents over-scanning beyond what was allocated from this specific warehouse
+        allocated_qty = item.available_qty if item.available_qty else item.requested_qty
+        if total_after_scan > allocated_qty:
+            # Check if this is a reasonable attempt given allocation constraints
+            available_to_scan = max(0, allocated_qty - (item.scanned_qty or 0))
+            if available_to_scan == 0:
+                raise pick_stream.exceptions.ValidationError(
+                    f'Cannot scan {scanned_qty} units into crate {crate_code}. '
+                    f'No more stock allocated from warehouse {item.from_warehouse}. '
+                    f'Allocated: {allocated_qty}, already scanned: {item.scanned_qty or 0}.'
+                )
+            else:
+                raise pick_stream.exceptions.ValidationError(
+                    f'Cannot scan {scanned_qty} units into crate {crate_code}. '
+                    f'Only {available_to_scan} units allocated from warehouse {item.from_warehouse}. '
+                    f'(Allocated: {allocated_qty}, already scanned: {item.scanned_qty or 0})'
+                )
     existing_crate = next((
         crate for crate in source.item_crates
         if crate.item_code == item_code 

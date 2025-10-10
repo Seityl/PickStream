@@ -287,7 +287,7 @@ class Source(Document):
         """
         Recalculates and rebuilds the entire items child table by allocating stock from available warehouses,
         excluding already-scanned/skipped items, and splitting items across multiple locations as needed.
-        
+
         Process: Aggregates items → finds available locations → allocates across warehouses → rebuilds items table.
 
         Mutates: Clears and repopulates self.items with warehouse-specific rows, sorted naturally by warehouse name.
@@ -304,14 +304,40 @@ class Source(Document):
         )
         from_warehouses = [set_from_warehouse] if set_from_warehouse else [default_set_from_warehouse]
         from_warehouses.extend(get_descendants_of('Warehouse', from_warehouses))
-        # Reset Items
+        # Build set of Source Item names that have associated Item Crates records
+        # These should NEVER be removed, as removing them breaks the link between
+        # Item Crates and their source allocation
+        source_items_with_crates = set()
+        for crate in self.get('item_crates'):
+            if crate.source_item:
+                source_items_with_crates.add(crate.source_item)
+        # Reset Items - only remove rows that:
+        # 1. Have no scanned quantity
+        # 2. Are not skipped
+        # 3. Have NO associated Item Crates records (critical for multi-location items)
         reset_rows = []
         for row in self.get('items'):
-            if not row.scanned_qty and not row.skipped:
+            if not row.scanned_qty and not row.skipped and row.name not in source_items_with_crates:
                 reset_rows.append(row)
         for row in reset_rows:
             self.remove(row)
         updated_locations = frappe._dict()
+        # First, preserve existing Source Items that have associated Item Crates
+        # Map them by the deduplication key so we don't create duplicates
+        for existing_item in self.get('items'):
+            if existing_item.name in source_items_with_crates:
+                key = (
+                    existing_item.item_code,
+                    existing_item.from_warehouse,
+                    existing_item.uom,
+                    existing_item.material_request_item
+                )
+                # Keep the existing item with all its data intact
+                updated_locations[key] = existing_item.as_dict()
+                # Preserve the name so it doesn't get regenerated
+                updated_locations[key]['name'] = existing_item.name
+                updated_locations[key]['idx'] = existing_item.idx
+
         self.item_location_map = frappe._dict()
         for item_doc in items:
             item_code = item_doc.item_code
@@ -336,29 +362,40 @@ class Source(Document):
                     location.uom,
                     location.material_request_item
                 )
+                # If this key already exists (from preserved items), skip it
+                # to avoid creating duplicates
                 if key not in updated_locations:
                     updated_locations.setdefault(key, location)
-                else:
-                    updated_locations[key].qty += location.qty
+                # Don't merge quantities - existing items already have their allocated qty
         sorted_locations = sorted(updated_locations.values(), key=lambda loc: natural_sort_key(loc.get('from_warehouse', '')))
         for location in sorted_locations:
             self.append('items', location)
 
     def aggregate_item_qty(self):
         """
-        Filters out already-processed items (scanned/skipped) and non-stock items, then 
+        Filters out already-processed items (scanned/skipped) and non-stock items, then
         calculates total requested quantity per item.
-        
+
         Sets self.item_count_map = {item_code: total_requested_qty}
-        
+
         Returns: List of unprocessed items ready for warehouse location assignment.
         """
         items = self.items
         self.item_count_map = {}
         item_list = []
+        # Build set of Source Item names that have associated Item Crates
+        # These items should NOT be aggregated/rebuilt as they're already allocated
+        source_items_with_crates = set()
+        for crate in self.get('item_crates'):
+            if crate.source_item:
+                source_items_with_crates.add(crate.source_item)
         for item in items:
             # Skip items that are already processed (scanned or skipped)
             if item.scanned_qty or item.skipped:
+                continue
+            # Skip items that have associated Item Crates records
+            # This prevents re-aggregation of items that are already allocated to crates/identifiers
+            if item.name and item.name in source_items_with_crates:
                 continue
             if not cint(frappe.get_cached_value('Item', item.item_code, 'is_stock_item')):
                 continue
