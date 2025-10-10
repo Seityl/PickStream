@@ -1,9 +1,11 @@
-import { NavLink, Outlet } from 'react-router';
+import { NavLink, Outlet, useNavigation } from 'react-router';
 import { FaHome, FaTools } from "react-icons/fa";
 import { BiSolidBellRing } from "react-icons/bi";
 import { IoPersonSharp } from "react-icons/io5";
+import PageLoader from '../components/PageLoader';
 
 const TabLayout = () => {
+  const navigation = useNavigation();
   const navItems = [
     { 
       path: "/pick_stream", 
@@ -31,11 +33,14 @@ const TabLayout = () => {
     }
   ];
 
+  // Show global loader for route transitions
+  const isNavigating = navigation.state === "loading";
+
   return (
     <div className='main-container relative'>
-      <Outlet />
-      <div className="fixed bottom-0 left-0 z-50 w-full bg-white border-t border-gray-200 shadow-lg">
-        <div className="flex flex-row justify-between items-center h-16 max-w-lg mx-auto px-4">
+      {isNavigating ? <PageLoader variant="entertaining" /> : <Outlet />}
+      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 z-50 w-full max-w-[428px] bg-white border-t border-gray-200 shadow-lg">
+        <div className="flex flex-row justify-between items-center h-16 px-4">
           {navItems.map(({ path, icon: Icon, label, end }) => (
             <NavLink 
               key={path}

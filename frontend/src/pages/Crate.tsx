@@ -162,7 +162,7 @@ function Crate() {
 
   if (!crateDetails || items.length === 0) {
     return (
-      <main className="flex flex-col bg-gray-50">
+      <main className="flex flex-col">
         <div className="bg-white border-b border-gray-200">
           <div className="max-w-4xl mx-auto">
             <div className="flex items-center justify-between p-4">
@@ -192,7 +192,7 @@ function Crate() {
   const hasDiscrepancies = discrepancies.length > 0;
 
   return (
-    <main className="bg-gray-50">
+    <main>
       {/* Header Section - Consistent with home page style */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-4xl mx-auto">

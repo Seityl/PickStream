@@ -69,3 +69,27 @@ def validate_scan_params(scanned_qty: int, crate_code: str, as_box: bool, as_oth
             raise pick_stream.exceptions.SystemError('Cannot scan crates and crate. Contact IT.')
         if scanned_qty > 0:
             raise pick_stream.exceptions.SystemError('Cannot scan crates with scanned quantity. Contact IT.')
+        
+        
+def validate_workflow_is_active(target_warehouse:str) -> None:
+    active = frappe.db.get_value('Pick Stream Workflow', {'target_warehouse': target_warehouse}, 'is_active')
+    if not active:
+        raise pick_stream.exceptions.ValidationError(f"{target_warehouse} workflow is not active. Contact Supervisor.")
+
+
+def validate_role(user:str, role:str) -> None:
+    """Raises an exception if user does not have a specific role"""
+    if not frappe.db.exists('Has Role', {'parent': user, 'role': role}):
+        raise pick_stream.exceptions.ValidationError(f"User '{user}' does not have role {role}. Contact Supervisor.")
+
+
+def validate_printer_exists(printer:str) -> None:
+    printers = get_printers()
+    if printer not in printers:
+        raise pick_stream.exceptions.ValidationError(f"Printer '{printer}' not found. Contact IT.")
+
+
+def validate_item_type(item_type:str, settings:dict) -> None:
+    item_types = [item.item_type for item in settings.item_types]
+    if item_type not in item_types:
+        raise pick_stream.exceptions.ValidationError(f"Item type '{item_type}' not in valid item types. Contact IT.")

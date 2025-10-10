@@ -12,6 +12,7 @@ import ProtectedLayout from './layouts/ProtectedLayout';
 import Home, { homeLoader }  from './pages/Home';
 import Login from './pages/Login';
 import MaterialRequestList, { materialRequestLoader } from './pages/MaterialRequestList';
+import PageLoader from './components/PageLoader';
 import CrateReceiving, { crateReceivingLoader } from './pages/CrateReceiving';
 import VerificationList, { verificationLoader } from './pages/Verification';
 import CrateVerification from './pages/CrateVerification';
@@ -20,7 +21,6 @@ import CrateTransit, { crateTransitLoader } from './pages/CrateTransit';
 import TransitList, { transitLoader } from './pages/Transit';
 import ReceivingList, { receivingLoader } from './pages/Receiving';
 import ItemGroupsView, { itemGroupsLoader } from './pages/ItemGroupsView';
-import ItemGroupView, { itemGroupLoader } from './pages/ItemGroupView';
 import Printers, { printersViewLoader } from './pages/Printers';
 import Picking, { pickingViewLoader } from './pages/Picking';
 import Profile, { profileLoader } from './pages/Profile';
@@ -29,6 +29,7 @@ import ItemIdentifierDetail from './pages/ItemIdentifierDetail';
 import TabLayout from './layouts/TabLayout';
 import Tools from './pages/Tools';
 import Crate, { crateLoader } from './pages/Crate';
+import CrateCheck from './pages/CrateCheck';
 import Notifications, { notificationsLoader } from './pages/Notifications';
 import ErrorPage from './pages/Error';
 
@@ -50,6 +51,7 @@ const router = createBrowserRouter(createRoutesFromElements(
         <Route path="tools/identifier-lookup" element={<IdentifierLookup/>} loader={IdentifierLookupLoader} />
         <Route path="tools/item-lookup/:id" element={<ItemIdentifierDetail />}/>
         <Route path="tools/active-crate" element={<Crate />} loader={crateLoader} />
+        <Route path="tools/crate-check" element={<CrateCheck />} />
         <Route path="transit" element={<TransitList />} loader={transitLoader}/>
         <Route path="transit/:crateId" element={<CrateTransit />} loader={crateTransitLoader} errorElement={<ErrorPage />}/>
         <Route path="receiving" element={<ReceivingList />} loader={receivingLoader}/>
@@ -58,11 +60,16 @@ const router = createBrowserRouter(createRoutesFromElements(
         <Route path="verification/crate/:crate_code" element={<CrateVerification />} errorElement={<ErrorPage />}/>
         <Route path="verification/item/:identifier_code" element={<ItemVerification />} errorElement={<ErrorPage />}/>
         <Route path="material-requests" errorElement={<ErrorPage />}>
-          <Route index element={<MaterialRequestList />} loader={materialRequestLoader} />
-          <Route path=":material_request" element={<ItemGroupsView />} loader={itemGroupsLoader}/>
+          <Route
+            index
+            element={<MaterialRequestList />}
+            loader={materialRequestLoader}
+            hydrateFallbackElement={<PageLoader variant="entertaining" />}
+          />
+          <Route path=":material_request" element={<ItemGroupsView />} loader={itemGroupsLoader} hydrateFallbackElement={<div />} />
         </Route>
         <Route path="printers" element={<Printers />} loader={printersViewLoader} errorElement={<ErrorPage />}/>
-        <Route path="picking" element={<Picking />} loader={pickingViewLoader} errorElement={<ErrorPage />}/>
+        <Route path="picking" element={<Picking />} loader={pickingViewLoader} errorElement={<ErrorPage />} hydrateFallbackElement={<div />} />
       </Route>
     </Route>
   </Route>

@@ -10,7 +10,7 @@ from frappe.model.document import Document
 from frappe.utils.nestedset import get_descendants_of
 from frappe.utils import cint, flt, floor, get_link_to_form
 
-import pick_stream
+from pick_stream import core, utils, exceptions
 
 
 class Source(Document):
@@ -23,9 +23,13 @@ class Source(Document):
         self.update_streams()
 
     def on_update(self):
+        frappe.log_error('on_update','on_update')
         if self.is_completed() and self.status != 'Completed':
             self.db_set('status', 'Completed')
-            
+            # Check if all sources for this user's MR are complete
+            # If yes, close the user's ToDo
+            utils.check_and_complete_mr_todo(self.material_request, self.user)
+
     def is_completed(self):
         return all(item.scanned or item.skipped for item in self.items)
 
@@ -46,10 +50,10 @@ class Source(Document):
             )
             
             if not stream_name:
-                stream_name = pick_stream.core.create_stream(self, crate_code)
+                stream_name = core.create_stream(self, crate_code)
 
             else:
-                pick_stream.core.update_stream(self, stream_name, status)
+                core.update_stream(self, stream_name, status)
 
     def get_crates_status(self):
         crates_status = frappe._dict()
@@ -65,7 +69,7 @@ class Source(Document):
             crate_items[row.crate_code].append(row)
         frappe.log_error('item crates', frappe.as_json(crate_items, indent=2))
         partially_fulfilled_crates = []
-        workflow = pick_stream.utils.get_workflow_details(self.to_warehouse)
+        workflow = utils.get_workflow_details(self.to_warehouse)
 
         for crate_code, items in crate_items.items():
             total_items = len(items)
@@ -176,7 +180,7 @@ class Source(Document):
 
         if partially_fulfilled_crates:
             crate_list = ', '.join(partially_fulfilled_crates)
-            raise pick_stream.exceptions.SystemError(
+            raise exceptions.SystemError(
                 f'System Error: Crate(s) {crate_list} were partially fulfilled. Item statuses have been reset to previous value ensure data integrity.'
             )
 
@@ -200,7 +204,7 @@ class Source(Document):
             
             crates_to_close = picking_crates[:-1]
             for crate_code, _ in crates_to_close:
-                pick_stream.core.close_crate(crate_code, commit=False)
+                core.close_crate(crate_code, commit=False)
                 crates_status[crate_code] = 'Waiting' # Update the status after closing
 
         return crates_status
@@ -261,7 +265,7 @@ class Source(Document):
                     f'Scanned quantity ({scanned_qty} {row.uom}) exceeds available quantity '
                     f'({allocated_qty} {row.uom}) for item {row.item_code} from {row.from_warehouse}. '
                 )
-                raise pick_stream.exceptions.ValidationError(user_error_msg)
+                raise exceptions.ValidationError(user_error_msg)
 
     def validate_scanned_qty(self):
         item_qty_map = {}
@@ -275,11 +279,11 @@ class Source(Document):
             if row.scanned_qty == 0:
                 continue
             if row.scanned and row.scanned_qty < 0:
-                raise pick_stream.exceptions.ValidationError(
+                raise exceptions.ValidationError(
                     f'Scanned qty {row.scanned_qty} cannot be less than 0 for item {row.item_code}'
                 )
             if row.scanned and row.scanned_qty > row.requested_qty:
-                raise pick_stream.exceptions.ValidationError(
+                raise exceptions.ValidationError(
                     f'Scanned qty {row.scanned_qty} exceeds requested qty {row.requested_qty} for item {row.item_code}'
                 )          
             
@@ -294,7 +298,7 @@ class Source(Document):
         """
         items = self.aggregate_item_qty()
         scanned_items_details = self.get_scanned_items_details(items)
-        settings = pick_stream.utils.get_settings()
+        settings = utils.get_settings()
         # Set default source warehouse if none is set on Material Request
         default_set_from_warehouse = settings.default_set_from_warehouse
         set_from_warehouse = frappe.db.get_value(
@@ -322,10 +326,11 @@ class Source(Document):
         for row in reset_rows:
             self.remove(row)
         updated_locations = frappe._dict()
-        # First, preserve existing Source Items that have associated Item Crates
+        # First, preserve existing Source Items that have associated Item Crates OR are skipped
         # Map them by the deduplication key so we don't create duplicates
         for existing_item in self.get('items'):
-            if existing_item.name in source_items_with_crates:
+            # Preserve items with crates OR items that are skipped
+            if existing_item.name in source_items_with_crates or existing_item.skipped:
                 key = (
                     existing_item.item_code,
                     existing_item.from_warehouse,
@@ -336,8 +341,6 @@ class Source(Document):
                 updated_locations[key] = existing_item.as_dict()
                 # Preserve the name so it doesn't get regenerated
                 updated_locations[key]['name'] = existing_item.name
-                updated_locations[key]['idx'] = existing_item.idx
-
         self.item_location_map = frappe._dict()
         for item_doc in items:
             item_code = item_doc.item_code
@@ -366,7 +369,8 @@ class Source(Document):
                 # to avoid creating duplicates
                 if key not in updated_locations:
                     updated_locations.setdefault(key, location)
-                # Don't merge quantities - existing items already have their allocated qty
+        # Clear the items table and rebuild from scratch for sequential idx assignment
+        self.items = []
         sorted_locations = sorted(updated_locations.values(), key=lambda loc: natural_sort_key(loc.get('from_warehouse', '')))
         for location in sorted_locations:
             self.append('items', location)

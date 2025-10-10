@@ -171,8 +171,8 @@ def submit_receiving_request(
 @handler(methods=['GET'])
 def get_crate_check(crate_code:str) -> Dict:
     """Returns details of specified crate"""
-    identifier_list = core.get_identifier_list(user, limit)
-    return generate_response(200, None, identifier_list)
+    crate_details = utils.get_crate_check_details(crate_code)
+    return generate_response(200, None, crate_details)
 
 
 @frappe.whitelist()
@@ -194,7 +194,7 @@ def get_item_identifier_details(item_identifier:str) -> Dict:
 @frappe.whitelist()
 @handler(methods=['GET'])
 def get_user_active_crate_details(user:str) -> Dict:
-    crate_details = core.get_user_crate_details(user)
+    crate_details = utils.get_user_crate_details(user)
     return generate_response(200, None, crate_details)
 
 

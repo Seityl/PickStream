@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { 
-  useNavigate, 
-  useSearchParams, 
-  useLoaderData, 
-  LoaderFunctionArgs, 
+import {
+  useNavigate,
+  useSearchParams,
+  useLoaderData,
+  LoaderFunctionArgs,
   useLocation,
-  redirect
+  redirect,
+  useNavigation
 } from 'react-router';
 import { FaArrowLeft, FaBarcode, FaBox, FaEllipsisH, FaTimes } from 'react-icons/fa';
 import { getPickingViewItem } from '../../utils/api';
@@ -15,6 +16,7 @@ import SkipItemModal from '../components/SkipItemModal';
 import ScanItemModal from '../components/ScanItemModal';
 import ScanAsBoxModal from '../components/ScanAsBoxModal';
 import ScanAsOtherModal from '../components/ScanAsOtherModal';
+import PageLoader from '../components/PageLoader';
 import { toast } from 'react-toastify';
 
 type SourceItem = {
@@ -58,19 +60,23 @@ const handleError = (err: any) => {
 function Picking() {
   const sourceItem = useLoaderData() as SourceItem;
   const location = useLocation();
+  const navigation = useNavigation();
+
   const [searchParams] = useSearchParams();
   const materialRequest = searchParams.get('mr_name');
   const itemGroup = searchParams.get('item_group');
-  
+
   // State management
-  const [crateCode, setCrateCode] = useState<string | null>(sourceItem.crate_code || null);
+  const [crateCode, setCrateCode] = useState<string | null>(sourceItem?.crate_code || null);
   const [hasCrateCode, setHasCrateCode] = useState<boolean>(Boolean(crateCode));
   const [crateScanInput, setCrateScanInput] = useState<string>(''); // Separate state for input field
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [itembarcode, setItemBarcode] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [itemIsValidated, setItemIsValidated] = useState<boolean>(false);
-  
+  const [isRedirecting, setIsRedirecting] = useState<boolean>(false);
+  const [isLoadingActiveCrate, setIsLoadingActiveCrate] = useState<boolean>(false);
+
   const navigate = useNavigate();
 
   const closeModal = useCallback((): void => {
@@ -79,7 +85,7 @@ function Picking() {
 
   // Fetch user's active crate
   const getUserActiveCrate = useCallback(async () => {
-    setIsLoading(true);
+    setIsLoadingActiveCrate(true);
     try {
       const user = await getCurrentUser();
       const params = { user };
@@ -95,7 +101,7 @@ function Picking() {
     } catch (err: any) {
       handleError(err);
     } finally {
-      setIsLoading(false);
+      setIsLoadingActiveCrate(false);
     }
   }, []);
 
@@ -103,7 +109,8 @@ function Picking() {
     if (activeModal === "scan") {
       getUserActiveCrate();
     }
-  }, [activeModal, getUserActiveCrate]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeModal]);
 
   // Validate crate
   const validateCrate = useCallback(async (crateCodeToValidate: string): Promise<boolean> => {
@@ -124,7 +131,6 @@ function Picking() {
         setCrateCode(crateCodeToValidate);
         setHasCrateCode(true);
         setCrateScanInput(''); // Clear the input field
-        searchParams.set('crate_code', crateCodeToValidate);
         return true;
       } else {
         // Crate exists but is not available (closed, in transit, etc.)
@@ -145,7 +151,7 @@ function Picking() {
     } finally {
       setIsLoading(false);
     }
-  }, [searchParams]);
+  }, []);
 
   // Skip item
   const skipItem = useCallback(async (): Promise<void> => {
@@ -164,7 +170,10 @@ function Picking() {
 
       await frappeClient.get('pick_stream.api.submit_scan_details', params);
       closeModal();
-      navigate(`${location.pathname}${location.search}`, { replace: true });
+      // Use a small delay to ensure state updates complete before navigation
+      setTimeout(() => {
+        navigate(`${location.pathname}${location.search}`, { replace: true });
+      }, 0);
     } catch (err: any) {
       handleError(err);
     } finally {
@@ -173,9 +182,9 @@ function Picking() {
   }, [materialRequest, sourceItem?.item_code, itemGroup, closeModal, navigate, location]);
 
   // Validate barcode
-  const validateBarcode = useCallback(async (itemCode: string, barcode: string): Promise<void> => {
-    if (!barcode) return;
-    
+  const validateBarcode = useCallback(async (itemCode: string, barcode: string): Promise<boolean> => {
+    if (!barcode) return false;
+
     setIsLoading(true);
     try {
       const params = {
@@ -186,13 +195,14 @@ function Picking() {
       const response = await frappeClient.get('pick_stream.api.validate_item_against_barcode', params);
       if (response.message.data) {
         setItemIsValidated(response.message.data);
+        return true;
       } else {
-        throw new Error('Invalid barcode');
+        handleError(new Error('Invalid barcode'));
+        return false;
       }
     } catch (err: any) {
       handleError(err);
-      // Re-throw the error so the modal can handle it properly
-      throw err;
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -239,7 +249,16 @@ function Picking() {
       }
       
       if (response.message.data.complete && (itemType !== "box" && itemType !== "other")) {
-        navigate(`/pick_stream/material-requests/${materialRequest}`);
+        closeModal();
+        setIsRedirecting(true);
+        toast.success("Pick list completed successfully! Redirecting...", {
+          ...TOAST_CONFIG,
+          autoClose: 2000,
+        });
+        // Small delay to let the user see the success message
+        setTimeout(() => {
+          navigate(`/pick_stream/material-requests/${materialRequest}`);
+        }, 500);
         return;
       }
 
@@ -250,16 +269,43 @@ function Picking() {
 
       closeModal();
       setItemIsValidated(false);
-      navigate(`${location.pathname}${location.search}`, { replace: true });
+      setItemBarcode('');
+      // Use a small delay to ensure state updates complete before navigation
+      setTimeout(() => {
+        navigate(`${location.pathname}${location.search}`, { replace: true });
+      }, 0);
     } catch (err: any) {
       handleError(err);
     } finally {
       setIsLoading(false);
     }
   }, [materialRequest, sourceItem?.item_code, itemGroup, crateCode, closeModal, navigate, location]);
-
+  // NOW you can do the conditional return
+  if (navigation.state === "loading") {
+    return <PageLoader variant="default" />;
+  }
   return (
     <main className="relative w-full flex flex-col bg-gray-50">
+      {/* Redirecting Overlay */}
+      {isRedirecting && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center"
+          style={{
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
+            backgroundColor: 'rgba(0, 0, 0, 0.4)'
+          }}
+        >
+          <div className="bg-white rounded-2xl p-8 shadow-2xl max-w-sm mx-4 text-center">
+            <div className="mb-4">
+              <div className="w-16 h-16 border-4 border-green-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Pick List Complete!</h3>
+            <p className="text-gray-600">Redirecting you back...</p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className='flex flex-row items-center px-4 py-4 bg-white shadow-sm border-b border-gray-200'>
         <button 
@@ -317,32 +363,42 @@ function Picking() {
           </button>
         </div>
 
-        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-          <p className="text-sm text-amber-800">
-            {crateCode 
-              ? `Current active crate: ${crateCode}. Scan a new crate to change it.`
-              : 'You have no active crate currently. Scan a crate to set it active.'}
-          </p>
-        </div>
+        {isLoadingActiveCrate ? (
+          <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-center space-x-3">
+              <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-sm text-blue-800 font-medium">Fetching your active crate...</p>
+            </div>
+          </div>
+        ) : (
+          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <p className="text-sm text-amber-800">
+              {crateCode
+                ? `Current active crate: ${crateCode}. Scan a new crate to change it.`
+                : 'You have no active crate currently. Scan a crate to set it active.'}
+            </p>
+          </div>
+        )}
 
         <div className="mb-4">
           <input
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none placeholder-gray-500"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none placeholder-gray-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
             name="crate_code"
             id="crate_code"
             type="text"
-            placeholder="Enter crate code"
+            placeholder={isLoadingActiveCrate ? "Loading..." : "Enter crate code"}
             value={crateScanInput}
             onChange={(e) => setCrateScanInput(e.target.value)}
-            autoFocus
+            disabled={isLoadingActiveCrate}
+            autoFocus={!isLoadingActiveCrate}
           />
         </div>
 
-        <button 
+        <button
           className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
-          type="submit" 
+          type="submit"
           onClick={() => crateScanInput && validateCrate(crateScanInput)}
-          disabled={isLoading || !crateScanInput}
+          disabled={isLoading || !crateScanInput || isLoadingActiveCrate}
         >
           {isLoading ? (
             <div className="flex items-center space-x-2">
@@ -356,8 +412,8 @@ function Picking() {
     </div>
   </>
 ) : (
-  <ScanItemModal 
-    itemCode={sourceItem?.item_code || ''} 
+  <ScanItemModal
+    itemCode={sourceItem?.item_code || ''}
     crateCode={crateCode || ''}
     requestedQuantity={sourceItem?.requested_qty || ''}
     itemDescription={sourceItem?.description || ''}
@@ -367,9 +423,10 @@ function Picking() {
     uom={sourceItem?.uom || ''}
     validateCrate={validateCrate}
     itemIsValidated={itemIsValidated}
-    submitScan={submitScan} 
-    closeModal={closeModal} 
+    submitScan={submitScan}
+    closeModal={closeModal}
     isLoading={isLoading}
+    isLoadingActiveCrate={isLoadingActiveCrate}
   />
 )}
           </>

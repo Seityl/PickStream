@@ -1,7 +1,8 @@
-import { useParams, Link, useLoaderData, LoaderFunctionArgs } from 'react-router';
-import { FaArrowLeft, FaArrowRight, FaCheckCircle, FaSpinner, FaBox, FaExclamationCircle } from "react-icons/fa";
+import { useParams, Link, useLoaderData, LoaderFunctionArgs, useNavigation } from 'react-router';
+import { FaArrowLeft, FaArrowRight, FaCheckCircle, FaBox, FaExclamationCircle } from "react-icons/fa";
 import { getItemGroups } from '../../utils/api';
 import { getCurrentUser } from '../../utils/auth';
+import PageLoader from '../components/PageLoader';
 
 type MaterialRequest = {
   mr_name: string;
@@ -29,14 +30,12 @@ function ItemGroupsView() {
   const viewData: MaterialRequest | null = useLoaderData();
   const params = useParams();
   const materialRequest = params.material_request;
+  const navigation = useNavigation();
+  const isLoading = navigation.state === "loading";
 
-  // Loading state
-  if (!viewData) {
-    return (
-      <main className='flex items-center justify-center'>
-        <FaSpinner className='animate-spin text-2xl text-blue-500 mx-auto mb-3' />
-      </main>
-    );
+  // Loading state with entertaining loader
+  if (isLoading || !viewData) {
+    return <PageLoader variant="entertaining" />;
   }
 
   // Calculate summary statistics - count available and already_picked item groups

@@ -5,7 +5,7 @@ const clientConfig = {
   domain: import.meta.env.VITE_FRAPPE_URL || 'http://10.0.10.92',
 };
 
-const frappeApp = new FrappeApp(clientConfig.domain);
+const frappeApp = new FrappeApp("");
 
 export const frappeClient = frappeApp.call();
 export const frappeAuth = frappeApp.auth();

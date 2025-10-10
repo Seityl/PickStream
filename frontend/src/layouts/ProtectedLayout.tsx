@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useLocation, Outlet, useNavigation } from 'react-router';
+import { useNavigate, useLocation, Outlet } from 'react-router';
 import { CgSpinnerTwo } from "react-icons/cg";
 import { FaShieldAlt, FaRoute } from "react-icons/fa";
 import { useAuth } from '../context/AuthContext';
@@ -8,7 +8,6 @@ import { validateSession } from '../../utils/auth';
 const ProtectedLayout = () => {
   const { isLoading, isAuthenticated, signOut } = useAuth();
   const navigate = useNavigate();
-  const navigation = useNavigation();
   const location = useLocation();
   const [isValidatingRoute, setIsValidatingRoute] = useState(false);
 
@@ -106,49 +105,17 @@ const ProtectedLayout = () => {
 
   return (
     <div className="relative min-h-screen">
-      {/* Enhanced navigation loader - centered with blurred backdrop */}
-      {navigation.state === "loading" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
-          <div className="bg-white/95 backdrop-blur-md rounded-lg shadow-xl border border-gray-200/50 p-4 flex items-center space-x-3 mx-4">
-            <CgSpinnerTwo className="animate-spin text-xl text-blue-600" />
-            <div>
-              <p className="text-sm font-medium text-gray-900">Loading</p>
-              <p className="text-xs text-gray-500">Please wait...</p>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Navigation progress bar - centered with backdrop */}
-      {navigation.state === "loading" && (
-        <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-8 z-40 w-64">
-          <div className="h-1.5 bg-white/30 backdrop-blur-sm rounded-full border border-white/20">
-            <div 
-              className="h-1.5 bg-blue-500/80 rounded-full shadow-sm" 
-              style={{
-                width: '70%',
-                animation: 'navProgress 1s ease-in-out infinite'
-              }}
-            ></div>
-          </div>
-        </div>
-      )}
-      
+      {/* Navigation loading is now handled by individual page components with PageLoader */}
+      {/* This allows each page to show its own customized loader experience */}
       <Outlet />
-      
-      {/* Global CSS animations */}
+
+      {/* Global CSS animations for auth loading */}
       <style dangerouslySetInnerHTML={{
         __html: `
           @keyframes loadingProgress {
             0% { width: 20%; }
             50% { width: 80%; }
             100% { width: 20%; }
-          }
-          
-          @keyframes navProgress {
-            0% { width: 10%; }
-            50% { width: 80%; }
-            100% { width: 10%; }
           }
         `
       }} />

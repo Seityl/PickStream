@@ -1,5 +1,5 @@
-import { useLoaderData, Link, useNavigation } from 'react-router';
-import { FaArrowLeft, FaClipboardList, FaSpinner, FaExclamationTriangle } from "react-icons/fa";
+import { useLoaderData, Link } from 'react-router';
+import { FaArrowLeft, FaClipboardList, FaExclamationTriangle } from "react-icons/fa";
 import MaterialRequestItem from '../components/MaterialRequestItem';
 import { getMaterialRequests } from '../../utils/api';
 import { getCurrentUser } from '../../utils/auth';
@@ -7,17 +7,6 @@ import { MatReqItem } from '../../types';
 
 function MaterialRequestList() {
   const materialRequests = useLoaderData() as MatReqItem[] | null;
-  const navigation = useNavigation();
-  const isLoading = navigation.state === "loading";
-
-  // Handle loading state
-  if (isLoading) {
-    return (
-      <main className='flex items-center justify-center'>
-          <FaSpinner className='animate-spin text-2xl text-blue-500 mx-auto mb-3' />
-      </main>
-    );
-  }
 
   // Handle error state
   if (!materialRequests) {

@@ -21,12 +21,13 @@ type ScanItemModalProps = {
   itemDescription: string;
   itemBarcode: string;
   setItemBarcode: (value: string) => void;
-  validateBarcode: (itemCode: string, itemBarcode: string) => Promise<void>;
+  validateBarcode: (itemCode: string, itemBarcode: string) => Promise<boolean>;
   validateCrate: (crateCode: string) => Promise<boolean>;
   itemIsValidated: boolean;
   submitScan: (options: SubmitScanOptions) => Promise<void>;
   closeModal: () => void;
   isLoading?: boolean;
+  isLoadingActiveCrate?: boolean;
 };
 
 export default function ScanItemModal({
@@ -42,7 +43,8 @@ export default function ScanItemModal({
   itemIsValidated,
   submitScan,
   closeModal,
-  isLoading = false
+  isLoading = false,
+  isLoadingActiveCrate = false
 }: ScanItemModalProps) {
   const [scannedQuantity, setScannedQuantity] = useState<number>(0);
   const [newCrateInput, setNewCrateInput] = useState<string>('');
@@ -50,40 +52,39 @@ export default function ScanItemModal({
   const [isValidatingCrate, setIsValidatingCrate] = useState(false);
   const [isValidatingBarcode, setIsValidatingBarcode] = useState(false);
   const [crates, setCrates] = useState<CrateItem[]>([{
-    scanned_qty: 0, 
-    crate_code: crateCode, 
+    scanned_qty: 0,
+    crate_code: crateCode,
     uom: uom || 'EACH'
   }]);
 
   // Step management for better UX flow
   const [currentStep, setCurrentStep] = useState<'scan_barcode' | 'enter_quantity' | 'add_crates'>('scan_barcode');
 
-  // Clear barcode when modal opens
+  // Clear barcode when modal opens (only once)
   useEffect(() => {
     setItemBarcode('');
-  }, [setItemBarcode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleBarcodeChange = (value: string) => {
     setItemBarcode(value);
   }
   const handleBarcodeValidation = useCallback(async () => {
     if (!itemBarcode.trim()) return;
-    
+
     setIsValidatingBarcode(true);
-    
-    try {
-      await validateBarcode(itemCode, itemBarcode);
+
+    const isValid = await validateBarcode(itemCode, itemBarcode);
+
+    if (isValid) {
       // Only progress to next step if validation succeeds
       setCurrentStep('enter_quantity');
-    } catch (error) {
-      console.error('Barcode validation failed:', error);
-      // Set user-friendly error message
-      // Don't change the step - stay on barcode scanning
-      // Optionally clear the barcode input to allow re-scanning
+    } else {
+      // Clear the barcode input to allow re-scanning
       setItemBarcode('');
-    } finally {
-      setIsValidatingBarcode(false);
     }
+
+    setIsValidatingBarcode(false);
   }, [validateBarcode, itemCode, itemBarcode, setItemBarcode]);
 
   const addNewCrate = useCallback(async () => {
@@ -255,12 +256,20 @@ export default function ScanItemModal({
                       <label className="block text-sm font-medium text-gray-700">
                         Crate Code
                       </label>
-                      <input
-                        type="text"
-                        value={crateCode}
-                        readOnly
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg text-gray-600"
-                      />
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={isLoadingActiveCrate ? 'Loading...' : crateCode}
+                          readOnly
+                          disabled={isLoadingActiveCrate}
+                          className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg text-gray-600 disabled:opacity-50"
+                        />
+                        {isLoadingActiveCrate && (
+                          <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                            <FaSpinner className="animate-spin text-blue-500" size={16} />
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="space-y-2">
@@ -332,7 +341,8 @@ export default function ScanItemModal({
                 {!isAddingCrate ? (
                   <button
                     onClick={() => setIsAddingCrate(true)}
-                    className="w-full border-2 border-dashed border-gray-300 rounded-lg py-4 text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors flex items-center justify-center space-x-2"
+                    disabled={isLoadingActiveCrate}
+                    className="w-full border-2 border-dashed border-gray-300 rounded-lg py-4 text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <FaPlus size={16} />
                     <span>Add Another Crate</span>
@@ -346,12 +356,13 @@ export default function ScanItemModal({
                         placeholder="Scan crate code"
                         value={newCrateInput}
                         onChange={(e) => setNewCrateInput(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                        disabled={isLoadingActiveCrate}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                       />
                       <div className="flex space-x-2">
                         <button
                           onClick={addNewCrate}
-                          disabled={!newCrateInput.trim() || isValidatingCrate}
+                          disabled={!newCrateInput.trim() || isValidatingCrate || isLoadingActiveCrate}
                           className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-1"
                         >
                           {isValidatingCrate ? (
