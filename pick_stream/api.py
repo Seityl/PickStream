@@ -139,19 +139,19 @@ def submit_verification_request(
     return generate_response(200, None, verification_request)
 
 
-# 
+#-------------------
 # Transit Endpoints
-# 
 
-# TODO: Add docs
 @frappe.whitelist()
 @handler(methods=['GET'])
 def get_transit_list_view(user:str) -> Dict:
+    """
+    Returns list of items available for verification for a specific user.
+    """
     transit_list = core.get_transit_list(user)
     return generate_response(200, None, transit_list)
 
 
-# TODO: Add docs
 @frappe.whitelist()
 @handler(methods=['POST'])
 def submit_transit_request(
@@ -161,6 +161,9 @@ def submit_transit_request(
     crate_codes:Any=[],
     identifier_codes:Any=[]
 ) -> Dict:
+    """
+    Submit a transit request for items assigned to crates or identifier codes.
+    """
     transit_request = core.process_transit_request(
         user,
         to_warehouse,
@@ -169,6 +172,7 @@ def submit_transit_request(
         identifier_codes
     )
     return generate_response(200, None, transit_request)
+
 
 # 
 # Receiving Endpoints

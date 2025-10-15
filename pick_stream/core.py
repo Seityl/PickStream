@@ -15,9 +15,7 @@ For license information, please see license.txt
 """
 
 
-import cups
 import json
-import tempfile
 from typing import List, Dict, Any
 
 import frappe
@@ -586,7 +584,7 @@ def get_verification_list(user:str) -> Dict:
         validations.validate_permission(user, 'verification')
         if user_branch not in workflow_details.verification_branches:
             raise exceptions.PermissionError(
-                f"User '{user}' is not authorized to verify from '{user_branch}'."
+                f"User '{user}' is not authorized to verify items for {target_warehouse} from '{user_branch}'. Contact Supervisor."
             )
         workflows = [workflow_details]
     else:
@@ -686,18 +684,32 @@ def get_verification_list(user:str) -> Dict:
     }
 
 
-# TODO: Make sure verified qty doesn't exceed requested qty
 def process_verification_request(
     user:str,
     items:Any,
     crate_code:str=None,
     identifier_code:str=None
 ) -> str:
+    """
+    Process verification request for items in crates or identifiers.
+    
+    This function:
+
+    - Compares verified quantities against original picked quantities
+    - Detects discrepancies (shortages/overdeliveries)
+    - Creates Stock Entry adjustments for discrepancies
+    - Updates Item Crates records with verification status
+    - Logs discrepancies to Source documents
+    """
+    # ===============================
+    # SECTION 1: INITIAL VALIDATION
+    # ===============================
     if crate_code and identifier_code:
         raise exceptions.SystemError(
             'Cannot process both crate_code and identifier_code simultaneously. Contact IT.'
         )
     validations.validate_exists('User', user)
+    # Determine target warehouse and validate code configuration
     if crate_code:
         validations.validate_exists('Crate', crate_code)
         crate = frappe.get_doc('Crate', crate_code)
@@ -722,211 +734,398 @@ def process_verification_request(
         items = json.loads(items)
     items = [frappe._dict(item) for item in items]
     [validations.validate_exists('Item', item.item_code) for item in items]
+    # =================================
+    # SECTION 2: PERMISSION VALIDATION
+    # =================================
     settings = utils.get_settings()
     workflow_details = utils.get_workflow_details(to_warehouse, settings)
+    # Check if user is privileged (can verify from any branch)
     if not utils.has_role(user, settings.privileged_user_role):
+        # Regular user: validate they have verification permission
         validations.validate_permission(user, 'verification')
+        # Ensure user's branch is authorized to verify for this workflow
         user_branch = utils.get_user_branch(user)
         if user_branch not in workflow_details.verification_branches:
             raise exceptions.PermissionError(
-                f"User '{user}' is not authorized to verify from '{user_branch}'. Contact Supervisor."
+                f"User '{user}' is not authorized to verify items for {to_warehouse} from '{user_branch}'. Contact Supervisor."
             )
-    all_updated_items = []     # List of all updated items
-    all_discrepancies = []     # List of all discrepancies
-    overdelivery_items = []    # Track items with overdelivery
-    source_item_mapping = {}   # Mapping of source to crate/identifier, item code and original qty
-    original_qty_mapping = {}  # Mapping of item code to aggregate original qty
-    requested_qty_mapping = {} # Track original requested quantities
-
+    # =====================================
+    # SECTION 3: DATA COLLECTION & MAPPING
+    # =====================================
+    # Initialize tracking structures
+    all_updated_items = []      # Track items where qty changed during verification
+    all_discrepancies = []      # Track all discrepancies found
+    overdelivery_items = []     # Track items exceeding requested quantity
+    source_item_mapping = {}    # Map source -> list of items with original quantities
+    original_qty_mapping = {}   # Map item_code -> total original qty across all sources
+    requested_qty_mapping = {}  # Map item_code -> originally requested qty from Material Request
+    # Create lookup dict of verified quantities by item code
     verified_items = {item.item_code: int(item.qty) for item in items}
-
+    # Discover source documents containing the crate/identifier items
     if crate_code:
-        source_names = set(frappe.db.get_value('Stream', row.stream, 'source') for row in crate.streams)
-
+        # For crates: get sources via Stream doctype
+        source_names = set(
+            frappe.db.get_value('Stream', row.stream, 'source') 
+            for row in crate.streams
+        )
     elif identifier_code:
-        source_names = [frappe.db.get_value('Item Crates', {'identifier_code': identifier_code}, 'parent')]
-    
+        # For identifiers: get source directly from Item Crates parent
+        source_names = [
+            frappe.db.get_value(
+                'Item Crates', 
+                {'identifier_code': identifier_code}, 
+                'parent'
+            )
+        ]
+    # Pre-load all source documents
     source_docs = {}
     for source in source_names:
         source_doc = frappe.get_doc('Source', source)
         source_docs[source] = source_doc
-
+    # Collect all related Material Requests
     material_requests = set()
     for source in source_names:
         material_requests.add(source_docs[source].material_request)
-
+    # Build requested quantity mapping from Material Requests
+    # This represents what was originally ordered
     for mr_name in material_requests:
         mr_doc = frappe.get_doc('Material Request', mr_name)
         for item in mr_doc.items:
             if item.item_code not in requested_qty_mapping:
                 requested_qty_mapping[item.item_code] = 0
-
             requested_qty_mapping[item.item_code] += item.qty
-
+    # Build source-item mapping with original picked quantities
     for source in source_names:
         source_doc = source_docs[source]
         source_item_mapping[source] = []
-        
         for item_crate in source_doc.item_crates:
+            # Filter items belonging to the crate/identifier being verified
             if crate_code and item_crate.crate_code == crate_code:
                 item_code = item_crate.item_code
-                original_qty = item_crate.qty
-                
-                source_item_mapping[source].append(frappe._dict({
-                    'item_crate': item_crate,
+                # Build mapping entry
+                source_item_mapping[source].append({
                     'item_code': item_code,
-                    'original_qty': original_qty
-                }))
-
-                if item_code in original_qty_mapping:
-                    original_qty_mapping[item_code] += original_qty
-
-                else:
-                    original_qty_mapping[item_code] = original_qty
-
+                    'item_crate': item_crate.name,
+                    'original_qty': item_crate.qty
+                })
+                # Aggregate original quantity across all sources
+                if item_code not in original_qty_mapping:
+                    original_qty_mapping[item_code] = 0
+                original_qty_mapping[item_code] += item_crate.qty
             elif identifier_code and item_crate.identifier_code == identifier_code:
                 item_code = item_crate.item_code
-                original_qty = item_crate.qty
-                
-                source_item_mapping[source].append(frappe._dict({
-                    'item_crate': item_crate,
+                # Build mapping entry
+                source_item_mapping[source].append({
                     'item_code': item_code,
-                    'original_qty': original_qty
-                }))
-
-                if item_code in original_qty_mapping:
-                    original_qty_mapping[item_code] += original_qty
-
-                else:
-                    original_qty_mapping[item_code] = original_qty
-                    
+                    'item_crate': item_crate.name,
+                    'original_qty': item_crate.qty
+                })
+                # Aggregate original quantity
+                if item_code not in original_qty_mapping:
+                    original_qty_mapping[item_code] = 0
+                original_qty_mapping[item_code] += item_crate.qty
+    # =================================
+    # SECTION 4: DISCREPANCY DETECTION
+    # =================================
+    # Compare verified quantities against original quantities
     for item_code, verified_qty in verified_items.items():
         original_qty = original_qty_mapping.get(item_code, 0)
         requested_qty = requested_qty_mapping.get(item_code, 0)
-        if original_qty != verified_qty:
+        # Discrepancy detected if verified != original
+        if verified_qty != original_qty:
             all_discrepancies.append(frappe._dict({
                 'item_code': item_code,
-                'original_qty': original_qty,
                 'verified_qty': verified_qty,
-                'requested_qty': requested_qty,
-                'difference': verified_qty - original_qty
+                'original_qty': original_qty,
+                'requested_qty': requested_qty
             }))
-
-            if verified_qty > requested_qty:
-                overdelivery_items.append(frappe._dict({
-                    'item_code': item_code,
-                    'overdelivery_qty': verified_qty - requested_qty,
-                    'verified_qty': verified_qty,
-                    'requested_qty': requested_qty
-                }))
-
+        # Track overdelivery (verified > requested)
+        if verified_qty > requested_qty:
+            overdelivery_items.append(frappe._dict({
+                'item_code': item_code,
+                'overdelivery_qty': verified_qty - requested_qty,
+                'verified_qty': verified_qty,
+                'requested_qty': requested_qty
+            }))
+    # ==========================================================
+    # SECTION 5: QUANTITY DISTRIBUTION & ADJUSTMENT CALCULATION
+    # ==========================================================
     frappe.db.savepoint('process_verification_request')
-
     try:
-        verified_qty_updates = {}
-
-        # If there are discrepancies quantities need to be adjusted
+        verified_qty_updates = {}   # Track new quantities to update per source
+        adjustment_entries = []     # Track Stock Entries created for adjustments
+        # Process discrepancies: distribute verified qty proportionally across sources
         for discrepancy in all_discrepancies:
             item_code = discrepancy.item_code
             verified_qty = discrepancy.verified_qty
             original_qty = discrepancy.original_qty
             requested_qty = discrepancy.requested_qty
-
-            # For overdelivery cases, cap the material request fulfillment at requested qty
-            # and handle excess separately
-            if verified_qty > requested_qty:
-                fulfillment_qty = requested_qty
-
-            else:
-                fulfillment_qty = verified_qty
-
-            # List of all sources containing this item
+            # During verification, we record ACTUAL physical quantities
+            # We do NOT cap at requested quantity - that happens later during receiving
+            # The verified_qty field must reflect what was physically counted
+            fulfillment_qty = verified_qty
+            # Find all sources containing this item
             sources_with_item = []
-
             for source_name, items in source_item_mapping.items():
                 for item_data in items:
-                    if item_data.item_code == item_code:
+                    if item_data['item_code'] == item_code:
                         sources_with_item.append(frappe._dict({
                             'source_name': source_name,
                             'item_crate': item_data['item_crate'],
                             'original_qty': item_data['original_qty']
                         }))
-            
-            # Inventory discrepancy has been detected.
-            # Distributing verified quantity proportionally
-            # across sources due to inability to isolate root cause.
+            # Distribute verified quantity proportionally across sources
+            # This is necessary because we can't determine which specific source
+            # had the discrepancy when one crate spans multiple sources
             remaining_fulfillment_qty = fulfillment_qty
             for i, source_item in enumerate(sources_with_item):
                 if i == len(sources_with_item) - 1:
+                    # Last source gets remaining quantity (handles rounding)
                     new_qty = remaining_fulfillment_qty
-
                 else:
+                    # Calculate proportional quantity
                     proportion = source_item.original_qty / original_qty
                     new_qty = int(fulfillment_qty * proportion)
                     remaining_fulfillment_qty -= new_qty
-                
+                # Store calculated quantity for this source
                 source_name = source_item.source_name
                 if source_name not in verified_qty_updates:
                     verified_qty_updates[source_name] = {}
-
                 verified_qty_updates[source_name][item_code] = new_qty
-                
+                # Track that this item was updated
                 if new_qty != source_item.original_qty:
                     all_updated_items.append(f'{item_code} in {source_name}')
-
+        # ======================================================
+        # SECTION 6: CREATE STOCK ADJUSTMENTS FOR DISCREPANCIES
+        # ======================================================
+        # Group adjustments by source and warehouse for Stock Entry creation
+        adjustment_by_source_warehouse = {}
+        for source_name in source_names:
+            source_doc = source_docs[source_name]
+            for item_crate in source_doc.item_crates:
+                should_process = (
+                    (crate_code and item_crate.crate_code == crate_code) or
+                    (identifier_code and item_crate.identifier_code == identifier_code)
+                )
+                if not should_process:
+                    continue
+                # Check if this item had a quantity adjustment
+                if (source_name in verified_qty_updates and 
+                    item_crate.item_code in verified_qty_updates[source_name]):
+                    new_qty = verified_qty_updates[source_name][item_crate.item_code]
+                    qty_diff = new_qty - item_crate.qty
+                    # Only create adjustment if there's a difference
+                    if qty_diff != 0:
+                        # Get source item for UOM and warehouse info
+                        source_item = next(
+                            (item for item in source_doc.items 
+                             if item.name == item_crate.source_item),
+                            None
+                        )
+                        if not source_item:
+                            raise exceptions.SystemError(
+                                f"Source item '{item_crate.source_item}' not found. Contact IT."
+                            )
+                        warehouse = source_item.from_warehouse
+                        adjustment_key = f'{source_name}|{warehouse}'
+                        # Initialize adjustment tracking for this source-warehouse combination
+                        if adjustment_key not in adjustment_by_source_warehouse:
+                            adjustment_by_source_warehouse[adjustment_key] = {
+                                'source_name': source_name,
+                                'warehouse': warehouse,
+                                'items': []
+                            }
+                        # Add item to adjustment list
+                        adjustment_by_source_warehouse[adjustment_key]['items'].append({
+                            'item_code': item_crate.item_code,
+                            'qty': abs(qty_diff),
+                            'uom': source_item.uom,
+                            'is_receipt': qty_diff > 0,  # True for shortages, False for overages
+                            'item_crate_name': item_crate.name
+                        })
+        # Create Stock Entry documents for adjustments
+        for adjustment_key, adjustment_data in adjustment_by_source_warehouse.items():
+            source_name = adjustment_data['source_name']
+            warehouse = adjustment_data['warehouse']
+            items = adjustment_data['items']
+            # Group by adjustment type (receipts vs issues)
+            receipts = [item for item in items if item['is_receipt']]
+            issues = [item for item in items if not item['is_receipt']]
+            # Create Stock Entry for receipts (verified qty > original qty)
+            if receipts:
+                receipt_entry = frappe.new_doc('Stock Entry')
+                receipt_entry.update({
+                    'stock_entry_type': 'Material Receipt',
+                    'purpose': 'Material Receipt',
+                    'to_warehouse': warehouse,
+                    'remarks': (
+                        f'Verification adjustment (shortage) for '
+                        f'{crate_code if crate_code else identifier_code} '
+                        f'(Source: <a href="/app/source/{source_name}">{source_name}</a>)'
+                    )
+                })
+                # Track the index position of each item as we append
+                # We'll use this to get the correct detail row after insert
+                item_crate_to_index = {}
+                for idx, item in enumerate(receipts):
+                    receipt_entry.append('items', {
+                        'item_code': item['item_code'],
+                        't_warehouse': warehouse,
+                        'qty': item['qty'],
+                        'uom': item['uom']
+                    })
+                    # Store the index position
+                    item_crate_to_index[item['item_crate_name']] = idx
+                receipt_entry.insert()
+                receipt_entry.submit()
+                receipt_entry.add_comment('Info', (
+                    f'Verification adjustment (shortage) for '
+                    f'{crate_code if crate_code else identifier_code} '
+                    f'(Source: <a href="/app/source/{source_name}">{source_name}</a>)'
+                ))
+                adjustment_entries.append(receipt_entry.name)
+                # Update Item Crates with adjustment reference
+                for item_crate_name, idx in item_crate_to_index.items():
+                    detail_row = receipt_entry.items[idx]
+                    for source_name in source_names:
+                        source_doc = source_docs[source_name]
+                        matching_item_crate = next(
+                            (ic for ic in source_doc.item_crates 
+                            if ic.name == item_crate_name),
+                            None
+                        )
+                        if matching_item_crate:
+                            # Update the IN-MEMORY object
+                            matching_item_crate.adjustment_stock_entry = receipt_entry.name
+                            matching_item_crate.adjustment_stock_entry_detail = detail_row.name
+                            break 
+            # Create Stock Entry for issues (verified qty < original qty)
+            if issues:
+                issue_entry = frappe.new_doc('Stock Entry')
+                issue_entry.update({
+                    'stock_entry_type': 'Material Issue',
+                    'purpose': 'Material Issue',
+                    'from_warehouse': warehouse,
+                    'remarks': (
+                        f'Verification adjustment (overage) for '
+                        f'{crate_code if crate_code else identifier_code} '
+                        f'(Source: <a href="/app/source/{source_name}">{source_name}</a>)'
+                    )
+                })
+                # Track the index position of each item as we append
+                # We'll use this to get the correct detail row after insert
+                item_crate_to_index = {}
+                for idx, item in enumerate(issues):
+                    detail_row = issue_entry.append('items', {
+                        'item_code': item['item_code'],
+                        's_warehouse': warehouse,
+                        'qty': item['qty'],
+                        'uom': item['uom']
+                    })
+                   # Store the index position
+                    item_crate_to_index[item['item_crate_name']] = idx
+                issue_entry.insert()
+                issue_entry.submit()
+                issue_entry.add_comment('Info', (
+                    f'Verification adjustment (overage) for '
+                    f'{crate_code if crate_code else identifier_code} '
+                    f'(Source: <a href="/app/source/{source_name}">{source_name}</a>)'
+                ))
+                adjustment_entries.append(issue_entry.name)
+                # Update Item Crates with adjustment reference
+                for item_crate_name, idx in item_crate_to_index.items():
+                    detail_row = issue_entry.items[idx]
+                    for source_name in source_names:
+                        source_doc = source_docs[source_name]
+                        matching_item_crate = next(
+                            (ic for ic in source_doc.item_crates 
+                            if ic.name == item_crate_name),
+                            None
+                        )
+                        if matching_item_crate:
+                            # Update the IN-MEMORY object
+                            matching_item_crate.adjustment_stock_entry = issue_entry.name
+                            matching_item_crate.adjustment_stock_entry_detail = detail_row.name
+                            break 
+        # =================================================
+        # SECTION 7: UPDATE ITEM CRATES & SOURCE DOCUMENTS
+        # =================================================
+        # Update Item Crates records with verification status and quantities
         for source_name in source_names:
             source_doc = source_docs[source_name]
             source_discrepancies = []
-
             for item_crate in source_doc.item_crates:
                 should_update = (
                     (crate_code and item_crate.crate_code == crate_code) or
                     (identifier_code and item_crate.identifier_code == identifier_code)
                 )
                 if should_update:
+                    # Mark as verified
                     item_crate.verified = True
                     item_crate.verifying_user = user
                     item_crate.verified_timestamp = frappe.utils.now()
-
+                    # Update verified_qty if discrepancy exists
                     if (source_name in verified_qty_updates and 
                         item_crate.item_code in verified_qty_updates[source_name]):
                         new_qty = verified_qty_updates[source_name][item_crate.item_code]
                         item_crate.verified_qty = new_qty
-                        
+                        # Log discrepancy for this source
                         if new_qty != item_crate.qty:
                             source_discrepancies.append(
                                 f'Item {item_crate.item_code}: {item_crate.qty} → {new_qty} '
                                 f'(diff: {new_qty - item_crate.qty:+d})'
                             )
                     else:
+                        # No discrepancy: verified_qty equals original qty
                         item_crate.verified_qty = item_crate.qty
-
+            # Add discrepancy notes to Source document for audit trail
             if source_discrepancies:
                 discrepancy_note = (
                     f'Verification discrepancies found by {user} for '
                     f'{crate_code if crate_code else identifier_code}:\n' + 
                     '\n'.join(source_discrepancies)
                 )
-                
                 if source_doc.notes:
                     source_doc.notes += f'\n\n{discrepancy_note}'
                 else:
                     source_doc.notes = discrepancy_note
-
             source_doc.save()
-
         frappe.db.commit()
-
+        # ========================================
+        # SECTION 8: LOG OVERDELIVERY INFORMATION
+        # ========================================
+        # Log overdelivery items for supervisor review
         if overdelivery_items:
             overdelivery_summary = []
             for item in overdelivery_items:
                 overdelivery_summary.append(
-                    f"{item.item_code}: +{item.overdelivery_qty} units"
+                    f'{item.item_code}: +{item.overdelivery_qty} units '
+                    f'(requested: {item.requested_qty}, verified: {item.verified_qty})'
                 )
-
+            # TODO: This is to be emailed rather than logged
+            frappe.log_error(
+                title=f'Overdelivery Detected: {crate_code if crate_code else identifier_code}',
+                message=(
+                    f'User: {user}\n'
+                    f'Code: {crate_code if crate_code else identifier_code}\n'
+                    f'Overdelivered Items:\n' + 
+                    '\n'.join(overdelivery_summary)
+                )
+            )
+        # ============================================================================
+        # SECTION 9: RETURN SUCCESS MESSAGE
+        # ============================================================================
+        # Build success message with details
+        success_msg = f'Verification successful for {crate_code if crate_code else identifier_code}.'
+        if all_discrepancies:
+            success_msg += f' {len(all_discrepancies)} discrepancy/discrepancies found and adjusted.'
+        if adjustment_entries:
+            success_msg += f' {len(adjustment_entries)} adjustment entry/entries created.'
+        return success_msg
     except Exception as e:
         frappe.db.rollback()
         raise exceptions.ValidationError(f'Error during verification: {str(e)}')
+
 
 def get_transit_list(user: str):
     validations.validate_exists('User', user)
