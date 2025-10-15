@@ -1,5 +1,5 @@
-import { useLoaderData, Link } from 'react-router';
-import { FaFileAlt, FaTruck, FaExclamationTriangle } from "react-icons/fa";
+import { useLoaderData, useNavigate } from 'react-router';
+import { FaFileAlt, FaTruck, FaExclamationTriangle, FaLock } from "react-icons/fa";
 import { PiBoxArrowDown } from "react-icons/pi";
 import { MdDomainVerification } from "react-icons/md";
 import { getCurrentUser } from '../../utils/auth';
@@ -12,8 +12,22 @@ interface WorkflowAccess {
   receiving: boolean;
 }
 
+type LoaderData = {
+  workflowAccess: WorkflowAccess | null;
+  error?: {
+    type: string;
+    message: string;
+    status?: number;
+  };
+};
+
 export default function Home() {
-  const workflowAccess = useLoaderData() as WorkflowAccess | null;
+  const data = useLoaderData() as LoaderData;
+  const navigate = useNavigate();
+  
+  // Extract data - handle both old format (direct object) and new format (object with error)
+  const workflowAccess = data && 'workflowAccess' in data ? data.workflowAccess : data as WorkflowAccess;
+  const error = data && 'error' in data ? data.error : undefined;
 
   const allNavItems = [
     { 
@@ -46,8 +60,34 @@ export default function Home() {
     }
   ];
 
-  // Handle error state
-  if (!workflowAccess) {
+  // Handle permission error state
+  if (error?.type === 'PermissionError') {
+    return (
+      <main className="min-h-screen bg-gray-50">
+        <div className='flex items-center justify-center min-h-[60vh] px-4'>
+          <div className='text-center'>
+            <div className='bg-white p-8 rounded-xl shadow-sm border border-amber-200 max-w-md'>
+              <div className='bg-amber-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4'>
+                <FaLock className='text-amber-600 text-xl' />
+              </div>
+              <h2 className='text-lg font-semibold text-gray-900 mb-2'>Access Denied</h2>
+              <p className='text-gray-600 text-sm mb-4 leading-relaxed'>
+                {error.message}
+              </p>
+              <div className='space-y-3'>
+                <p className='text-xs text-gray-500'>
+                  Please contact your administrator to request workflow access.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // Handle general error state
+  if (error || workflowAccess === null) {
     return (
       <main className="min-h-screen bg-gray-50">
         <div className='flex items-center justify-center min-h-[60vh] px-4'>
@@ -56,9 +96,11 @@ export default function Home() {
               <div className='bg-red-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4'>
                 <FaExclamationTriangle className='text-red-500 text-xl' />
               </div>
-              <h2 className='text-lg font-semibold text-gray-900 mb-2'>Unable to Load Workflow Access</h2>
+              <h2 className='text-lg font-semibold text-gray-900 mb-2'>
+                {error?.type === 'NetworkError' ? 'Connection Error' : 'Unable to Load Workflow Access'}
+              </h2>
               <p className='text-gray-600 text-sm mb-4 leading-relaxed'>
-                We're having trouble connecting to the server. This could be a temporary network issue.
+                {error?.message || "We're having trouble connecting to the server. This could be a temporary network issue."}
               </p>
               <div className='space-y-3'>
                 <button 
@@ -100,10 +142,10 @@ export default function Home() {
       {accessibleNavItems.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {accessibleNavItems.map(({ path, label, icon: Icon, description }) => (
-            <Link
+            <div
               key={path}
-              to={path}
-              className="group block p-6 bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-lg hover:border-blue-200 transition-all duration-200 active:scale-[0.98]"
+              onClick={() => navigate(path)}
+              className="group cursor-pointer block p-6 bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-lg hover:border-blue-200 transition-all duration-200 active:scale-[0.98]"
             >
               <div className="flex items-start space-x-4">
                 <div className="p-3 bg-blue-50 rounded-xl group-hover:bg-blue-100 transition-colors">
@@ -123,7 +165,7 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       ) : (
@@ -140,7 +182,7 @@ export default function Home() {
               </h2>
               
               <p className='text-gray-600 mb-6 leading-relaxed'>
-                You don't currently have access to any workflows. Please contact IT to request access.
+                You don't currently have access to any workflows. Please contact your administrator to request access.
               </p>
             </div>
           </div>
@@ -162,27 +204,74 @@ export async function homeLoader() {
     const response = await getUserWorkflowAccess(user);
     console.log('workflow access response:', response);
     
-    // Check if response contains an error structure
-    if (response && response.message && response.message.status >= 400) {
+    // Check if response contains an error structure (like 403 Permission Error)
+    if (response?.message?.error) {
+      const errorType = response.message.error.error_type;
+      const errorMessage = response.message.error.error_message;
+      
       console.error('API returned error:', response.message.error);
-      return null; // Trigger error state
+      
+      return {
+        workflowAccess: null,
+        error: {
+          type: errorType,
+          message: errorMessage,
+          status: response.message.status
+        }
+      };
+    }
+    
+    // Check for HTTP error status
+    if (response?.message?.status && response.message.status >= 400) {
+      console.error('API returned error status:', response.message.status);
+      return {
+        workflowAccess: null,
+        error: {
+          type: 'ServerError',
+          message: 'Failed to load workflow access. Please try again.',
+          status: response.message.status
+        }
+      };
     }
     
     // Handle case where response has the data nested in message.data
-    if (response && response.message && response.message.data) {
-      return response.message.data;
+    if (response?.message?.data && typeof response.message.data === 'object') {
+      return {
+        workflowAccess: response.message.data
+      };
     }
     
-    // Handle direct response
-    if (response && typeof response === 'object') {
-      return response;
+    // Handle direct response (backwards compatibility)
+    if (response && typeof response === 'object' && !response.message) {
+      return {
+        workflowAccess: response
+      };
     }
     
     // Return null to trigger error state if response is unexpected
-    return null;
+    return {
+      workflowAccess: null,
+      error: {
+        type: 'UnexpectedResponse',
+        message: 'Received unexpected response from server. Please try again.'
+      }
+    };
   } catch (error) {
     console.error('Failed to load workflow access:', error);
-    // Return null to trigger error state in component
-    return null;
+    
+    // Determine error type
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+    const isNetworkError = errorMessage.includes('fetch') || errorMessage.includes('network');
+    
+    // Return error state to trigger error UI in component
+    return {
+      workflowAccess: null,
+      error: {
+        type: isNetworkError ? 'NetworkError' : 'LoadError',
+        message: isNetworkError 
+          ? 'Unable to connect to the server. Please check your internet connection.'
+          : 'Failed to load workflow access. Please try again.'
+      }
+    };
   }
 }

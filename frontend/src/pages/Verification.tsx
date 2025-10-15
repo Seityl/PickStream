@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Link, useLoaderData, useNavigate } from 'react-router';
-import { FaArrowLeft, FaBox, FaTag, FaMapMarkerAlt, FaSearch, FaTimes } from "react-icons/fa";
+import { FaArrowLeft, FaBox, FaTag, FaMapMarkerAlt, FaSearch, FaTimes, FaExclamationTriangle, FaLock } from "react-icons/fa";
 import { getVerificationListView } from '../../utils/api';
 import { getCurrentUser } from '../../utils/auth';
 import ListItem from '../components/ListItem';
@@ -22,23 +22,153 @@ type VerificationListType = {
   identifier_details: Identifier[];
 };
 
+type LoaderData = {
+  verificationList: VerificationListType | null;
+  error?: {
+    type: string;
+    message: string;
+  };
+};
+
 export async function verificationLoader() {
   const user = await getCurrentUser();
   if (!user) {
     throw new Response("Not Logged In", { status: 401 });
   }
-  const verificationList = await getVerificationListView(user);
-  return { verificationList };
+  
+  try {
+    const response = await getVerificationListView(user);
+    
+    // Check if response contains an error
+    if (response?.message?.error) {
+      return { 
+        verificationList: null,
+        error: {
+          type: response.message.error.error_type,
+          message: response.message.error.error_message
+        }
+      };
+    }
+    
+    // Check if response has the expected structure
+    if (response?.message?.data) {
+      return { verificationList: response.message.data };
+    }
+    
+    // Assume the response is the verification list directly
+    return { verificationList: response };
+  } catch (error) {
+    console.error('Error loading verification list:', error);
+    return { 
+      verificationList: null,
+      error: {
+        type: 'LoadError',
+        message: 'Failed to load verification list. Please try again.'
+      }
+    };
+  }
 }
 
 function VerificationList() {
-  const { verificationList } = useLoaderData() as { verificationList: VerificationListType };
+  const { verificationList, error } = useLoaderData() as LoaderData;
   const navigate = useNavigate();
 
-  const totalCount = verificationList.crate_details.length + verificationList.identifier_details.length;
+  // Handle permission error state
+  if (error?.type === 'PermissionError') {
+    return (
+      <main>
+        <header className='flex flex-row items-center px-4 sm:px-6 py-4 bg-white border-b border-gray-200 sticky top-0 z-10'>
+          <Link 
+            to={`/pick_stream/`}
+            className="p-2 -ml-2 rounded-lg hover:bg-gray-100 focus:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-colors"
+            aria-label="Go back to pick stream"
+          >
+            <FaArrowLeft size={16} className="text-gray-600"/>
+          </Link>
+          <h1 className='mx-auto text-lg font-semibold text-gray-900'>Verification Queue</h1>
+        </header>
+        
+        <div className='flex items-center justify-center min-h-[60vh] px-4'>
+          <div className='text-center'>
+            <div className='bg-white p-8 rounded-xl shadow-sm border border-amber-200 max-w-md'>
+              <div className='bg-amber-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4'>
+                <FaLock className='text-amber-600 text-xl' />
+              </div>
+              <h2 className='text-lg font-semibold text-gray-900 mb-2'>Access Denied</h2>
+              <p className='text-gray-600 text-sm mb-4 leading-relaxed'>
+                {error.message}
+              </p>
+              <div className='space-y-3'>
+                <button 
+                  onClick={() => navigate('/pick_stream/')}
+                  className='w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors'
+                >
+                  Return to Home
+                </button>
+                <p className='text-xs text-gray-500'>
+                  Please contact IT to request access to the verification workflow.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // Handle general error state
+  if (error || !verificationList) {
+    return (
+      <main>
+        <header className='flex flex-row items-center px-4 sm:px-6 py-4 bg-white border-b border-gray-200 sticky top-0 z-10'>
+          <Link 
+            to={`/pick_stream/`}
+            className="p-2 -ml-2 rounded-lg hover:bg-gray-100 focus:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-colors"
+            aria-label="Go back to pick stream"
+          >
+            <FaArrowLeft size={16} className="text-gray-600"/>
+          </Link>
+          <h1 className='mx-auto text-lg font-semibold text-gray-900'>Verification Queue</h1>
+        </header>
+        
+        <div className='flex items-center justify-center min-h-[60vh] px-4'>
+          <div className='text-center'>
+            <div className='bg-white p-8 rounded-xl shadow-sm border border-red-200 max-w-md'>
+              <div className='bg-red-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4'>
+                <FaExclamationTriangle className='text-red-500 text-xl' />
+              </div>
+              <h2 className='text-lg font-semibold text-gray-900 mb-2'>Unable to Load Verification Queue</h2>
+              <p className='text-gray-600 text-sm mb-4 leading-relaxed'>
+                {error?.message || "We're having trouble connecting to the server. This could be a temporary network issue."}
+              </p>
+              <div className='space-y-3'>
+                <button 
+                  onClick={() => window.location.reload()} 
+                  className='w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors'
+                >
+                  Try Again
+                </button>
+                <button 
+                  onClick={() => navigate('/pick_stream/')}
+                  className='w-full bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors'
+                >
+                  Return to Home
+                </button>
+                <p className='text-xs text-gray-500'>
+                  If this problem continues, please contact IT.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  const totalCount = (verificationList.crate_details?.length || 0) + (verificationList.identifier_details?.length || 0);
 
   // Create a lookup map for quick searching
-  const allItems = [...verificationList.crate_details, ...verificationList.identifier_details];
+  const allItems = [...(verificationList.crate_details || []), ...(verificationList.identifier_details || [])];
   const itemLookup = allItems.reduce((acc, item) => {
     const isCrate = 'crate_code' in item;
     const code = isCrate ? item.crate_code : item.identifier_code;
@@ -84,11 +214,9 @@ function VerificationList() {
     const foundItem = itemLookup[trimmedInput.toLowerCase()];
     
     if (foundItem) {
-      // Navigate to verification page
       navigate(`/pick_stream/verification/${foundItem.type}/${foundItem.code}`);
     } else {
       setScanError(`Code "${trimmedInput}" not found in verification queue`);
-      // Clear error after 3 seconds
       setTimeout(() => setScanError(''), 3000);
     }
   };
@@ -99,7 +227,6 @@ function VerificationList() {
     setScanInput('');
     setScanError('');
     if (!showScanInput) {
-      // Focus input after it's rendered
       setTimeout(() => scanInputRef.current?.focus(), 100);
     }
   };
@@ -108,12 +235,12 @@ function VerificationList() {
   const handleScanInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setScanInput(e.target.value);
     if (scanError) {
-      setScanError(''); // Clear error when user starts typing
+      setScanError('');
     }
   };
 
   return (
-    <main className='min-h-screen bg-gray-50'>
+    <main>
       <header className='flex flex-row items-center px-4 py-4 bg-white shadow-sm border-b border-gray-200'>
         <Link 
           to={`/pick_stream/`}

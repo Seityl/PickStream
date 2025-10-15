@@ -1,7 +1,18 @@
+"""
+Utilities for Pick Stream system.
+
+Author: Jeriel Francis
+
+Copyright (c) 2025, Jollys Pharmacy Limited and contributors
+For license information, please see license.txt
+"""
+
+
 import cups
 import json
 import html
-from typing import List, Dict, Any, Optional
+import tempfile
+from typing import List, Dict, Any, Optional, Union
 
 import frappe
 from frappe.utils import strip_html
@@ -9,7 +20,9 @@ from frappe.utils.nestedset import get_descendants_of
 
 from pick_stream import validations, exceptions
 
-def get_printers() -> dict:
+
+def get_printers() -> List:
+    """Returns list of printer names from CUPS server."""
     settings = get_settings()
     try:
         conn = cups.Connection(host=settings.host, port=settings.port)
@@ -18,6 +31,236 @@ def get_printers() -> dict:
         raise exceptions.ValidationError(f'Error connecting to CUPS: {e}')
     except Exception as e:
         raise exceptions.ValidationError(f'Error connecting to CUPS: {e}')  
+
+
+def process_print_request(
+    printer:str,
+    mr_name:str=None,
+    item_code:str=None,
+    item_type:str=None,
+    user:str=None,
+    qty:int=0, 
+    item_identifier:str=None,
+    crate_code:str=None
+) -> dict:
+    validations.validate_printer_exists(printer)
+    settings = get_settings()
+    if crate_code:
+        validations.validate_exists('Crate', crate_code)
+        if qty <= 0:
+            qty = 1
+        return print_crate_label(printer, settings, crate_code, qty)
+    if item_identifier:
+        validations.validate_exists('Pick Stream Identifier', item_identifier)
+        identifier_doc = frappe.get_doc('Pick Stream Identifier', item_identifier)
+        mr_name = identifier_doc.material_request
+        item_code = identifier_doc.item_code
+        item_type = identifier_doc.item_type
+        user = frappe.session.user
+        # User must explicitly give qty when identifier is provided
+        if qty == 0:
+            raise exceptions.SystemError('Cannot print 0 labels. Contact IT.')
+    # Validate params when identifier is not provided
+    else:
+        if not mr_name:
+            raise exceptions.SystemError('Material Request name is required. Contact IT.')
+        if not item_code:
+            raise exceptions.SystemError('Item Code is required. Contact IT.')
+        if not item_type:
+            raise exceptions.SystemError('Item Type is required. Contact IT.')
+        if not item_type:
+            raise exceptions.SystemError('User is required. Contact IT.')
+    if qty < 0:
+        raise exceptions.SystemError(f'Cannot print {qty} labels. Contact IT.')
+    validations.validate_exists('Material Request', mr_name)
+    validations.validate_exists('Item', item_code)
+    validations.validate_item_type(item_type, settings)
+    validations.validate_exists('User', user)
+    # Default to default set from warehouse if not set on material request
+    from_warehouse = frappe.db.get_value('Material Request', mr_name, 'set_from_warehouse') or settings.default_set_from_warehouse
+    to_warehouse = frappe.db.get_value('Material Request', mr_name, 'set_warehouse')
+    item_name = frappe.db.get_value('Item', item_code, 'item_name')
+    print_job = print_item_identifier(
+        user,
+        mr_name,
+        printer,
+        from_warehouse,
+        to_warehouse,
+        item_code,
+        item_type,
+        settings,
+        item_name,
+        qty,
+        item_identifier
+    )
+    return print_job
+
+
+def print_crate_label(
+    printer: str,
+    settings: dict,
+    crate_code: str,
+    qty: int,
+) -> str:
+    zpl_template = (
+        '^XA\n'
+        # Define label width and length
+        '^PW609^LH0,0^FS\n'
+        # Crate Code text near top
+        '^FO90,40^A0N,150,140^FD{crate_code}^FS\n'
+        # Barcode of crate code centered horizontally
+        '^FO110,180^BY4,3,100\n'
+        '^BCN,210,N,N,N^FD{crate_code}^FS\n'
+        '^XZ\n'
+    )
+    try:
+        # Configure CUPS connection
+        host, port = settings.get('host'), settings.get('port')
+        cups.setServer(host)
+        cups.setPort(port)
+        conn = cups.Connection(host=host, port=port)
+        # Write ZPL for all labels to a temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.zpl') as tmp:
+            for i in range(qty):
+                tmp.write(zpl_template.format(crate_code=crate_code).encode('utf-8'))
+            tmp.flush()
+            tmp_path = tmp.name
+        # Print options
+        options = {
+            'document-format': 'application/vnd.cups-raw',
+            'media': 'Custom.3x2in',
+            'scaling': '100',
+            'fit-to-page': 'True'
+        }
+        job_name = f'Crate Label Print - {crate_code}'
+        conn.printFile(printer, tmp_path, job_name, options)
+        frappe.db.commit()
+        return 'Print Job Submitted Successfully'
+    except RuntimeError as e:
+        frappe.db.rollback()
+        raise exceptions.SystemError(f'CUPS connection error: {e}')
+    except Exception as e:
+        frappe.db.rollback()
+        raise exceptions.SystemError(f'Printing failed: {e}')
+
+
+def print_item_identifier(
+    user:str,
+    mr_name:str,
+    printer:str,
+    from_warehouse:str, 
+    to_warehouse:str, 
+    item_code: str=None, 
+    item_type: str=None, 
+    settings:dict=None,
+    item_name:str=None,
+    qty:int=0, 
+    item_identifier:str=None
+) -> dict:
+    if not item_identifier:
+        item_print_details = get_item_print_details(item_code, mr_name, from_warehouse, to_warehouse)
+        if not item_print_details:
+            raise exceptions.SystemError(f"Item '{item_code}' not found in source for material request '{mr_name}'.")
+        item_identifier = item_print_details.identifier_code
+        # Default to item qty if label qty not provided
+        if qty == 0:
+            qty = item_print_details.qty
+    max_lines = 3
+    max_width = 600
+    # ZPL code template for each label
+    zpl_code_template = (
+        '^XA\n'
+        # Item Code
+        '^FO24,24^A0N,46,46^FDItem Code: {item_code} - {counter}/{qty}^FS\n'
+        # Item Name block
+        '^FO24,76\n'
+        '^A0N,34,34\n'
+        f'^FB{max_width},{max_lines},0,L,0\n'  # Adapts to item length
+        f'^FD{item_name}^FS\n'
+        # From Warehouse
+        '^FO24,190^A0N,30,30^FDFrom: {from_warehouse}^FS\n'
+        # To Warehouse
+        '^FO24,224^A0N,30,30^FDTo:   {to_warehouse}^FS\n'
+        # Barcode
+        '^FO24,264\n'
+        '^BY3.8,3.8,112\n'
+        '^BCN,112,Y,N,N\n'
+        f'^FD{item_identifier}^FS\n'
+        '^XZ\n'
+    )
+    try:
+        host, port = settings.host, settings.port
+        cups.setServer(host)
+        cups.setPort(port)
+        conn = cups.Connection(host=host, port=port)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.zpl') as tmp_file:
+            # Write all labels, looping through the quantity
+            for i in range(1, qty + 1):
+                zpl_code = zpl_code_template.format(
+                    item_code=item_code,
+                    item_name=item_name,
+                    from_warehouse=from_warehouse,
+                    to_warehouse=to_warehouse,
+                    item_identifier=item_identifier,
+                    counter=i,
+                    qty=qty
+                )
+                tmp_file.write(zpl_code.encode('utf-8'))
+            tmp_file.flush()
+            temp_file_path = tmp_file.name
+        job_options = {
+            'document-format': 'application/vnd.cups-raw',
+            'media': 'Custom.3x2in',
+            'scaling': '100',
+            'fit-to-page': 'True'
+        }
+        job_name = f'{item_type} Identifier Print Job'
+        conn.printFile(printer, temp_file_path, job_name, job_options)
+        frappe.db.savepoint('print_item_identifier')
+        # Update Item Identifier after successfully sending print job
+        current_doc = frappe.get_doc('Pick Stream Identifier', item_identifier)
+        current_printed = current_doc.printed or 0
+        current_qty_printed = current_doc.qty_printed or 0
+        current_date_printed = current_doc.dates_printed or ''
+        new_entry = f'User: {user} - Date: {frappe.utils.now()} - Printer: {printer} - Qty: {qty}'
+        updated_date_printed = f'{current_date_printed}<br>{new_entry}' if current_date_printed else new_entry
+        frappe.db.set_value('Pick Stream Identifier', item_identifier, {
+            'printed': current_printed + 1,
+            'qty_printed': current_qty_printed + qty,
+            'dates_printed': updated_date_printed
+        })
+        frappe.db.commit()
+        return 'Print Job Submitted Successfully'
+    except RuntimeError as e:
+        frappe.db.rollback()
+        raise exceptions.SystemError(f'Error connecting to CUPS: {e}')
+    except Exception as e:
+        frappe.db.rollback()
+        raise exceptions.SystemError(f'Error connecting to CUPS: {e}')
+
+
+def get_item_print_details(item_code: str, mr_name: str, from_warehouse: str, to_warehouse: str) -> Dict:
+    item_group = frappe.db.get_value('Item', item_code, 'item_group')
+    source_doc = frappe.get_doc(
+        'Source',
+        { 
+            'item_group': item_group,
+            'material_request': mr_name,
+            'from_warehouse': from_warehouse,
+            'to_warehouse': to_warehouse
+        }
+    )
+    item = next(
+        item for item in source_doc.item_crates if 
+        item.item_code == item_code and 
+        item.identifier_code != None
+    )
+    if not item:
+        return None
+    return frappe._dict({
+        'identifier_code': item.identifier_code,
+        'qty': item.qty if not item.verified_qty else item.verified_qty
+    })
 
 
 def get_settings() -> Dict:
@@ -155,6 +398,7 @@ def get_source_name(mr_name:str, item_group:str) ->  Optional[str]:
 
 
 def get_relevant_source_item(source_name: str) -> Dict:
+    """Returns the next unscanned and unskipped item with warehouse and quantity details."""
     out = frappe._dict()
     doc = frappe.get_doc('Source', source_name)
     try:
@@ -276,6 +520,7 @@ def get_material_request_item_group_item_quantity(
 
 
 # TODO: Dont hardcode this
+# 14/10/25
 def get_workflow_target_warehouse(user:str, user_branch:str) -> str:
     """Return target warehouse based on user branch."""
     match user_branch:
@@ -620,12 +865,19 @@ def check_and_complete_mr_todo(mr_name: str, user: str) -> None:
     
     If all are completed, mark the user's ToDo as Closed.
     """
-    # Get all item groups assigned to this user for this MR
     user_item_groups = get_mr_item_groups_for_user(mr_name, user)
     if not user_item_groups:
-        # No Sources exist for this user and MR yet
+        # No assigned item groups - nothing to check
         return
-    # Check if all Sources for this user's item groups are completed
+    # Check if all item groups have sources created
+    existing_sources = frappe.db.get_all('Source', filters={
+        'item_group': ['in', user_item_groups],
+        'material_request': mr_name
+    }, pluck='item_group')
+    # If not all item groups have sources created, don't close the ToDo
+    if set(existing_sources) != set(user_item_groups):
+        return
+    # Check if all item groups are completed
     incomplete_sources = frappe.db.count('Source', filters={
         'item_group': ['in', user_item_groups],
         'status': ['!=', 'Completed'],
@@ -654,7 +906,6 @@ def check_and_complete_mr_todo(mr_name: str, user: str) -> None:
                 title=f'Failed to close ToDo {todo_name}',
                 message=f'Error closing ToDo for user {user} on MR {mr_name}: {str(e)}'
             )
-
 
 
 def get_crate_check_details(crate_code:str) -> dict:
@@ -701,32 +952,58 @@ def get_crate_check_details(crate_code:str) -> dict:
     })
 
 
-def get_user_crate_details(user:str) -> Dict:
-    validations.validate_exists('User', user)
-    crate_code = get_user_crate(user)
+def get_user_crate_details(user:str, first_crate_code:str=None) -> Dict:
+    if first_crate_code:
+        validations.validate_exists('User', user)
+        crate_code = first_crate_code
+    else:
+        crate_code = get_user_crate(user)
     if not crate_code:
         return frappe._dict()
-    items = frappe.db.get_all(
-        'Item Crates',
-        filters=[
-            ['crate_code', '=', crate_code],
-            ['parenttype', '=', 'Source'], 
-            ['picking_user', '=', user],
-            ['crate_closed', '=', 0],
-            ['transited', '=', 0],
-            ['verified', '=', 0],
-            ['received', '=', 0]
-        ],
-        fields=['item_code', 'qty', 'source_item'],
-        order_by='idx asc'
-    ) or []
+    if first_crate_code:
+        # Get Items from crate document explicitly if first crate code is passed
+        items = frappe.db.get_all(
+            'Source Item',
+            filters=[
+                ['parenttype', '=', 'Crate'], 
+                ['parent', '=', crate_code], 
+            ],
+            fields=[
+                'source as source_name',
+                'scanned_qty as qty',
+                'from_warehouse',
+                'requested_qty',
+                'item_code',
+                'item_name',
+                'name',
+                'uom',
+            ],
+            order_by='idx asc'
+        ) or []
+    else:
+        # Get Items from source documents otherwise
+        items = frappe.db.get_all(
+            'Item Crates',
+            filters=[
+                ['crate_code', '=', crate_code],
+                ['parenttype', '=', 'Source'], 
+                ['picking_user', '=', user],
+                ['crate_closed', '=', 0],
+                ['transited', '=', 0],
+                ['verified', '=', 0],
+                ['received', '=', 0]
+            ],
+            fields=['name', 'item_code', 'qty', 'source_item', 'parent as source_name', 'from_warehouse'],
+            order_by='idx asc'
+        ) or []
     for item in items:
-        if item.get('source_item'):
-            item['requested_qty'] = frappe.db.get_value('Source Item', item['source_item'], 'requested_qty')
-            item['item_name'] = frappe.db.get_value('Source Item', item['source_item'], 'item_name')
-            item['uom'] = frappe.db.get_value('Source Item', item['source_item'], 'uom')
-        else:
-            item['requested_qty'] = None
+        if not first_crate_code:
+            if item.get('source_item'):
+                item['requested_qty'] = frappe.db.get_value('Source Item', item['source_item'], 'requested_qty')
+                item['item_name'] = frappe.db.get_value('Source Item', item['source_item'], 'item_name')
+                item['uom'] = frappe.db.get_value('Source Item', item['source_item'], 'uom')
+            else:
+                item['requested_qty'] = None
     return frappe._dict({
         'crate_code': crate_code,
         'from_warehouse': frappe.db.get_value('Crate', crate_code, 'from_warehouse'),
@@ -735,82 +1012,300 @@ def get_user_crate_details(user:str) -> Dict:
     })
 
 
-def close_crate(crate_code:str, items:Any=[], commit:bool=False) -> None:
-    open_crate_items = frappe.db.get_all('Item Crates',
+def close_crate(crate_code:str, items:Any=None, commit:bool=False) -> None:
+    if items is None:
+        items = []
+    open_crate_items = frappe.db.get_all(
+        'Item Crates',
         filters={
             'crate_code': crate_code,
             'parenttype': 'Source',
-            'crate_closed': '0'
+            'crate_closed': 0
         },
-        fields=['parent']
+        fields=['parent', 'item_code', 'from_warehouse']
     )
     if not open_crate_items:
-        raise exceptions.SystemError(f"Crate '{crate_code}' is already closed. Contact IT.")
-    items_lookup = {}
-    for item in items:
-        items_lookup[item.get('item_code')] = item
-    source_names = set([item.parent for item in open_crate_items])
-    for source_name in source_names:
+        exceptions.SystemError(f"Crate '{crate_code}' is already closed. Contact IT.")
+    # Create lookup for item quantities (by item_code only)
+    items_lookup = {
+        item.get('item_code'): item
+        for item in items
+    }
+    # If specific items provided, validate they all exist in the crate
+    if items:
+        # Create lookup of what's actually in the crate (by item_code only)
+        crate_items_set = {
+            item.item_code
+            for item in open_crate_items
+        }
+        # Check if all provided items exist in the crate
+        provided_items_set = set(items_lookup.keys())
+        unmatched_items = provided_items_set - crate_items_set
+        if unmatched_items:
+            raise exceptions.ValidationError(
+                f"Cannot close crate '{crate_code}'. "
+                f"The following items are not found in this crate: {', '.join(unmatched_items)}. "
+                f'Crate contents may have changed since you last viewed it. Please refresh and try again.'
+            )
+        # Check if all items in the crate are being closed
+        missing_items = crate_items_set - provided_items_set
+        if missing_items:
+            raise exceptions.ValidationError(
+                f"Cannot close crate '{crate_code}'. "
+                f"You must close all items in the crate. Missing: {', '.join(missing_items)}. "
+                f'Crate contents may have changed since you last viewed it. Please refresh and try again.'
+            )
+    # Group items by source
+    source_items = {}
+    for item in open_crate_items:
+        source_items.setdefault(item.parent, []).append(item)
+    # Process each source
+    for source_name, crate_items in source_items.items():
         source_doc = frappe.get_doc('Source', source_name)
+        modified = False
         for item_crate in source_doc.item_crates:
-            if item_crate.crate_code == crate_code:
-                # TODO: Account for same item in same crate from multiple locations
-                if item_crate.item_code in items_lookup:
-                    item_data = items_lookup[item_crate.item_code]
+            if item_crate.crate_code != crate_code:
+                continue
+            # If specific items provided, only process those items
+            if items:
+                item_data = items_lookup.get(item_crate.item_code)
+                if item_data:
                     final_qty = item_data.get('final_qty')
-                    current_qty = item_crate.qty
-                    
-                    # Update quantity if there's a discrepancy
-                    if final_qty is not None and final_qty != current_qty:
+                    if final_qty is not None and final_qty != item_crate.qty:
                         item_crate.qty = final_qty
-                        
+                        modified = True
+                    item_crate.crate_closed = 1
+                    item_crate.crate_closed_timestamp = frappe.utils.now()
+                    modified = True
+            else:
+                # No specific items provided, close all items in this crate
                 item_crate.crate_closed = 1
                 item_crate.crate_closed_timestamp = frappe.utils.now()
-
-        source_doc.save()
-
+                modified = True
+        if modified:
+            source_doc.save()
     if commit:
-        frappe.db.savepoint('close_crate')
-
         try:
             frappe.db.commit()
-            
         except Exception as e:
             frappe.db.rollback()
-            raise exceptions.SystemError(f'Error closing crate: {e}')
+            exceptions.SystemError(f'Error closing crate: {e}')
 
 
-def get_workflow_details(target_warehouse:str=None):
-    """Will return all workflows if target warehouse is not passed (For privileged users)"""
+def source_is_complete(source_doc: Dict) -> bool:
+    completed =  frappe.db.get_value('Source', source_doc.name, 'status') == 'Completed'
+    if not completed:
+        return not any(not item.scanned and not item.skipped for item in source_doc.items)
+    return completed
+
+
+def verify_first_crate(crate_code:str, items:Any=None, commit:bool=False) -> dict:
+    """Verify quantities for the first crate in multi-crate picking scenario"""
+    if items is None:
+        items = []
+    if isinstance(items, str):
+        items = json.loads(items)
+    items = [frappe._dict(item) for item in items]
+    sources = set(item.source_name for item in items if item.source_name)
+    # Get all items in the crate
+    crate_items = frappe.db.get_all(
+        'Item Crates',
+        filters={
+            'parent': ['in', sources],
+            'crate_code': crate_code,
+            'parenttype': 'Source',
+            'crate_closed': 1
+        },
+        fields=['parent', 'item_code', 'qty', 'name', 'from_warehouse']
+    )
+    if not crate_items:
+        raise exceptions.SystemError(
+            f"Crate '{crate_code}' has no items. Contact IT."
+        )
+    # Create composite key for unique item identification
+    def make_item_key(item_code, from_warehouse, source):
+        """Create a composite key from item_code, from_warehouse, and source"""
+        return f"{item_code}||{from_warehouse or ''}||{source or ''}"
+    # Create lookup for verified quantities by composite key
+    # This handles cases where the same item appears multiple times from different sources/warehouses
+    items_lookup = {}
+    for item in items:
+        if item.item_code and item.source_name:
+            key = make_item_key(
+                item.item_code,
+                item.from_warehouse,
+                item.source_name
+            )
+            items_lookup[key] = item
+    # Create lookup for crate items by composite key
+    crate_items_lookup = {}
+    for crate_item in crate_items:
+        key = make_item_key(
+            crate_item.item_code,
+            crate_item.from_warehouse,
+            crate_item.parent
+        )
+        crate_items_lookup[key] = crate_item
+    # Validate all items are accounted for
+    closed_items_set = set(crate_items_lookup.keys())
+    provided_items_set = set(items_lookup.keys())
+    if closed_items_set != provided_items_set:
+        # Create readable error messages
+        def format_keys(keys):
+            return [f"({k.replace('||', ', ')})" for k in sorted(keys)]
+        frappe.log_error(
+            title=f'Item mismatch verifying crate {crate_code}',
+            message=(
+                f"Crate '{crate_code}' item mismatch. "
+                f'Items in crate: {", ".join(format_keys(closed_items_set))}. '
+                f'Items provided: {", ".join(format_keys(provided_items_set))}.'
+            )
+        )
+        raise exceptions.ValidationError(
+            f"Item mismatch for crate '{crate_code}'. Please refresh and try again."
+        )
+    # Group items by source
+    source_items = {}
+    for item in crate_items:
+        source_items.setdefault(item.parent, []).append(item)
+    frappe.db.savepoint('verify_first_crate')
+    try:
+        # Process each source
+        for source_name, source_crate_items in source_items.items():
+            source_doc = frappe.get_doc('Source', source_name)
+            modified = False
+            for item_crate in source_doc.item_crates:
+                if item_crate.crate_code != crate_code or not item_crate.crate_closed:
+                    continue
+                # Create composite key for this item_crate
+                key = make_item_key(
+                    item_crate.item_code,
+                    item_crate.from_warehouse,
+                    source_name
+                )
+                # Look up the verified item data using composite key
+                item_data = items_lookup.get(key)
+                if item_data:
+                    frappe.log_error('Verifying item', f'Crate: {crate_code}, Item: {item_crate.item_code}, Key: {key}, Data: {item_data}')
+                    final_qty = item_data.get('final_qty')
+                    if final_qty is not None and final_qty != item_crate.qty:
+                        item_crate.qty = final_qty
+                        modified = True
+            if modified:
+                source_doc.save()
+        if commit:
+            frappe.db.commit()
+        return {'success': True, 'crate_code': crate_code}
+    except Exception as e:
+        frappe.db.rollback()
+        raise exceptions.ValidationError(f'Error verifying crate: {e}')
+
+
+def get_identifier_list(user, limit):
+    return frappe.get_all(
+        'Pick Stream Identifier',
+        filters={'user': user},
+        fields=[
+            'from_warehouse',
+            'to_warehouse',
+            'item_code',
+            'item_type',
+            'user',
+            'name'
+        ],
+        limit=limit,
+        order_by='modified desc'
+    )
+
+
+def get_identifier_details(item_identifier: str) -> Dict:
+    if not frappe.db.exists('Pick Stream Identifier', item_identifier):
+        raise exceptions.SystemError(f'Item Identifier {item_identifier} not found. Contact IT.')
+    doc = frappe.get_doc('Pick Stream Identifier', item_identifier)
+    return frappe._dict({
+        'material_request': doc.material_request,
+        'from_warehouse': doc.from_warehouse,
+        'dates_printed': doc.dates_printed,
+        'date_created': doc.date_created,
+        'to_warehouse': doc.to_warehouse,
+        'qty_printed': doc.qty_printed,
+        'item_code': doc.item_code,
+        'item_type': doc.item_type,
+        'printed': doc.printed,
+        'user': doc.user,
+        'uom': doc.uom,
+        'qty': doc.qty
+    })
+    
+
+def get_crate_details_(
+    user:str,
+    crate_code:str,
+    to_verify:bool=False,
+    to_transit:bool=False,
+    to_receive:bool=False
+) -> dict:
+    validations.validate_exists('User', user)
+    validations.validate_exists('Crate', crate_code)
+    to_warehouse = frappe.db.get_value('Crate', crate_code, 'to_warehouse')
     settings = get_settings()
+    workflow_details = get_workflow_details(to_warehouse, settings)
+    if not has_role(user, settings.privileged_user_role):
+        if to_verify:
+            validations.validate_permission(user, 'verification')
+            user_branch = get_user_branch(user)
+            if user_branch not in workflow_details.verification_branches:
+                raise exceptions.PermissionError(
+                    f"User '{user}' is not authorized to verify from '{user_branch}'. Contact Supervisor."
+                )
+        if to_transit:
+            validations.validate_permission(user, 'transit')
+        if to_receive:
+            validations.validate_permission(user, 'receiving')
+    return frappe._dict({
+        'crate_code': crate_code,
+        'from_warehouse': frappe.db.get_value('Crate', crate_code, 'from_warehouse'),
+        'to_warehouse': to_warehouse,
+        'items': frappe.db.get_all(
+            'Source Item',
+                filters={'parent': crate_code},
+                fields=['item_code', 'item_name', 'uom', 'scanned_qty as qty'],
+                order_by='idx asc'
+            ) or []
+    })
+
+
+def get_workflow_details(target_warehouse:str=None, settings:Dict=None) -> Union[Dict, List[Dict]]:
+    """Will return all workflows if target warehouse is not passed (For privileged users)"""
+    if settings is None:
+        settings = get_settings()
     active_workflows = [row for row in settings.workflow_settings if row.is_active]
-
     if not active_workflows:
-        raise exceptions.ValidationError('No active workflows found. Contact IT.')
-
+        raise exceptions.ValidationError(
+            'No active workflows found. Contact IT.'
+        )
     if target_warehouse:
         validations.validate_exists('Warehouse', target_warehouse)
-        matching_row = next((row for row in active_workflows if row.target_warehouse == target_warehouse), None)
-        
+        matching_row = next(
+            (row for row in active_workflows if row.target_warehouse == target_warehouse),
+            None
+        )
         if matching_row is None:
-            raise exceptions.ValidationError(f'No active workflow found for {target_warehouse}. Contact Supervisor.')
-        
+            raise exceptions.ValidationError(
+                f'No active workflow found for {target_warehouse}. Contact IT.'
+            )
         workflows = [matching_row]
-
     else:
         workflows = active_workflows
-
     result = []
-
     for row in workflows:
         verification_branches = {
-            wh for wh in [
+            br for br in [
                 row.verification_branch_1,
                 row.verification_branch_2,
                 row.verification_branch_3
-            ] if wh
+            ] if br
         }
-
         picking_warehouse_branches = {
             wh: branch for wh, branch in [
                 (row.picking_warehouse_1, row.picking_user_branch_1),
@@ -818,7 +1313,6 @@ def get_workflow_details(target_warehouse:str=None):
                 (row.picking_warehouse_3, row.picking_user_branch_3)
             ] if wh
         }
-
         picking_warehouse_stores = {
             wh: store for wh, store in [
                 (row.picking_warehouse_1, row.picking_store_1),
@@ -826,23 +1320,17 @@ def get_workflow_details(target_warehouse:str=None):
                 (row.picking_warehouse_3, row.picking_store_3)
             ] if wh
         }
-
         result.append(frappe._dict({
             'target_warehouse': row.target_warehouse,
             'picking_warehouse_branches': picking_warehouse_branches,
             'picking_warehouse_stores': picking_warehouse_stores,
             'verification_branches': verification_branches,
-            'verification_user_role': row.verification_user_role,
             'verification_after_receiving': row.verification_after_receiving,
-            # 'transit_required': row.transit_required,
             'transit_after_verification': row.transit_after_verification,
-            'transit_user_role': row.transit_user_role,
             'transit_warehouse': row.transit_warehouse,
-            'receiving_user_role': row.receiving_user_role,
             'receiving_after_verification': row.receiving_after_verification,
             'send_notifications': row.send_notifications
         }))
-
     return result[0] if target_warehouse else result
 
 

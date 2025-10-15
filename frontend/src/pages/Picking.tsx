@@ -16,6 +16,7 @@ import SkipItemModal from '../components/SkipItemModal';
 import ScanItemModal from '../components/ScanItemModal';
 import ScanAsBoxModal from '../components/ScanAsBoxModal';
 import ScanAsOtherModal from '../components/ScanAsOtherModal';
+import FirstCrateVerificationModal from '../components/FirstCrateVerificationModal';
 import PageLoader from '../components/PageLoader';
 import { toast } from 'react-toastify';
 
@@ -76,6 +77,8 @@ function Picking() {
   const [itemIsValidated, setItemIsValidated] = useState<boolean>(false);
   const [isRedirecting, setIsRedirecting] = useState<boolean>(false);
   const [isLoadingActiveCrate, setIsLoadingActiveCrate] = useState<boolean>(false);
+  const [firstCrateData, setFirstCrateData] = useState<any>(null);
+  const [isVerifyingCrate, setIsVerifyingCrate] = useState<boolean>(false);
 
   const navigate = useNavigate();
 
@@ -239,7 +242,24 @@ function Picking() {
       }
 
       const response = await frappeClient.get('pick_stream.api.submit_scan_details', params);
-      
+
+      // Check if first crate verification is required (multi-crate scenario)
+      if (response.message.data.first_crate_verification?.requires_verification) {
+        // Store first crate data for verification modal
+        setFirstCrateData(response.message.data.first_crate_verification);
+
+        // Update active crate to the last crate
+        if (itemType === "crates" && crates && crates.length > 0) {
+          const activeCrate = crates[crates.length - 1].crate_code;
+          setCrateCode(activeCrate);
+          setHasCrateCode(true);
+        }
+
+        // Close scan modal and show verification modal
+        closeModal();
+        return;
+      }
+
       // CRITICAL FIX: Update crate state after submitting multiple crates
       // When scanning with multiple crates, the last crate becomes the active one
       if (itemType === "crates" && crates && crates.length > 0) {
@@ -247,7 +267,7 @@ function Picking() {
         setCrateCode(activeCrate);
         setHasCrateCode(true);
       }
-      
+
       if (response.message.data.complete && (itemType !== "box" && itemType !== "other")) {
         closeModal();
         setIsRedirecting(true);
@@ -280,6 +300,32 @@ function Picking() {
       setIsLoading(false);
     }
   }, [materialRequest, sourceItem?.item_code, itemGroup, crateCode, closeModal, navigate, location]);
+
+  // Handle first crate verification confirmation
+  const handleVerifyCrate = useCallback(async (items: any[]) => {
+    setIsVerifyingCrate(true);
+    try {
+      await frappeClient.post('pick_stream.api.verify_first_crate_quantities', {
+        crate_code: firstCrateData.crate_code,
+        items: items
+      });
+
+      toast.success(`Crate ${firstCrateData.crate_code} verified successfully!`, TOAST_CONFIG);
+
+      // Clear verification state
+      setFirstCrateData(null);
+
+      // Navigate to next item
+      setTimeout(() => {
+        navigate(`${location.pathname}${location.search}`, { replace: true });
+      }, 0);
+    } catch (err: any) {
+      handleError(err);
+    } finally {
+      setIsVerifyingCrate(false);
+    }
+  }, [firstCrateData, navigate, location]);
+
   // NOW you can do the conditional return
   if (navigation.state === "loading") {
     return <PageLoader variant="default" />;
@@ -448,9 +494,9 @@ function Picking() {
           />
         }
         
-        {activeModal === "scanOther" && 
-          <ScanAsOtherModal 
-            itemCode={sourceItem?.item_code || ''} 
+        {activeModal === "scanOther" &&
+          <ScanAsOtherModal
+            itemCode={sourceItem?.item_code || ''}
             requestedQuantity={sourceItem?.requested_qty || ''}
             uom={sourceItem?.uom || ''}
             itemDescription={sourceItem?.description}
@@ -458,12 +504,21 @@ function Picking() {
             setItemBarcode={setItemBarcode}
             validateBarcode={validateBarcode}
             itemIsValidated={itemIsValidated}
-            submitScan={submitScan} 
-            closeModal={closeModal} 
+            submitScan={submitScan}
+            closeModal={closeModal}
             isLoading={isLoading}
           />
         }
-        
+
+        {/* First Crate Verification Modal */}
+        {firstCrateData && (
+          <FirstCrateVerificationModal
+            crateData={firstCrateData}
+            onConfirm={handleVerifyCrate}
+            isLoading={isVerifyingCrate}
+          />
+        )}
+
         {/* Item Details Card */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Item Details</h2>

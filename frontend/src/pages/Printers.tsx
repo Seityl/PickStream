@@ -143,7 +143,7 @@ function Printers() {
   }
 
   return (
-    <main className="bg-gray-50">
+    <main>
       {/* Improved Header */}
       <header className='sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm'>
         <div className="px-4 py-4">
@@ -261,13 +261,12 @@ function Printers() {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
             <FaInfoCircle className="text-gray-400 text-3xl mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No Printers Available</h3>
-            <p className="text-gray-600">Please contact your administrator to configure printers.</p>
+            <p className="text-gray-600">Please contact IT to configure printers.</p>
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-start mb-4">
               <h2 className="text-lg font-semibold text-gray-900">Available Printers</h2>
-              <span className="text-sm text-gray-500">{printers.length} found</span>
             </div>
             
             {printers.map((printer) => {

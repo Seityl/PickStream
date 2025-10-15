@@ -25,7 +25,7 @@ function IdentifierLookup(): React.ReactElement {
   console.log(itemIdentifiers);
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <main>
       {/* Header Section - Consistent with home page style */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-4xl mx-auto">

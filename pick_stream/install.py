@@ -1,10 +1,16 @@
+# Copyright (c) 2025, Jollys Pharmacy Limited and contributors
+# For license information, please see license.txt
+
+
 import frappe
 from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_field
 
+
 @frappe.whitelist()
 def after_install():
     pass
+
 
 def custom_field_user_group():
     create_custom_field(
@@ -15,6 +21,7 @@ def custom_field_user_group():
             'insert_after': 'user_group_members'
         }
     )
+
 
 def custom_field_assign_warehouse_staff():
     create_custom_field(

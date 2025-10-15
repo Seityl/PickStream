@@ -50,6 +50,7 @@ class Stream(Document):
                 'scanned_qty': stream_item.scanned_qty,
                 'scanned': stream_item.scanned,
                 'stream': self.name,
+                'source': stream_item.source,
                 'material_request': stream_item.material_request,
                 'material_request_item': stream_item.material_request_item
             })

@@ -1,10 +1,15 @@
+# Copyright (c) 2025, Jollys Pharmacy Limited and contributors
+# For license information, please see license.txt
+
+
 from . import __version__ as app_version
+
 
 app_name = 'pick_stream'
 app_title = 'Pick Stream'
 app_publisher = 'Jollys Pharmacy Limited'
 app_description = 'A robust, efficient, and accurate module on top of ERPNext that simplifies the re-order process, reduces errors, and enhances operational efficiency across locations.'
-app_email = 'jeriel@jollysonline.com'
+app_email = 'systems@jollysonline.com'
 app_license = 'MIT'
 
 required_apps = ['erpnext']
@@ -231,7 +236,7 @@ ignore_links_on_delete = ['Crate']
 # export_python_type_annotations = False
 
 default_log_clearing_doctypes = {
-	'Crate Log': 90  # of days to retain logs
+	'Crate Log': 120  # of days to retain logs
 }
 
 website_route_rules =[{'from_route': '/pick_stream/<path:app_path>', 'to_route': 'pick_stream'},]

@@ -1,6 +1,6 @@
 import React, { ReactNode } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
-import { FaArrowLeft, FaBarcode, FaPrint, FaBox, FaClipboardList, FaTruck, FaClock } from 'react-icons/fa';
+import { FaArrowLeft, FaBarcode, FaPrint, FaBox, FaClipboardList, FaTruck, FaClock, FaUser } from 'react-icons/fa';
 import { useItemIdentifierDetails } from '../../utils/customApiHooks';
 
 interface ItemIdentifierDetails {
@@ -13,6 +13,9 @@ interface ItemIdentifierDetails {
   to_warehouse: string;
   date_created: string;
   printed: number;
+  qty_printed: number;
+  dates_printed: string;
+  user: string;
 }
 
 interface InfoCardProps {
@@ -196,6 +199,7 @@ export default function ItemIdentifierDetail() {
             {/* Material Request Card */}
             <InfoCard icon={FaClipboardList} title="Material Request" iconColor="text-purple-600" bgColor="bg-purple-50">
               <DataRow label="Request Number" value={itemIdentifierDetails.material_request} />
+              <DataRow label="Created By" value={itemIdentifierDetails.user} />
             </InfoCard>
 
             {/* Transfer Details Card */}
@@ -204,10 +208,24 @@ export default function ItemIdentifierDetail() {
               <DataRow label="To Warehouse" value={itemIdentifierDetails.to_warehouse} />
             </InfoCard>
 
+            {/* Print History Card */}
+            <InfoCard icon={FaPrint} title="Print History" iconColor="text-blue-600" bgColor="bg-blue-50">
+              <DataRow label="Number of Print Jobs" value={itemIdentifierDetails.printed} />
+              <DataRow label="Total Labels Printed" value={itemIdentifierDetails.qty_printed} />
+              {itemIdentifierDetails.dates_printed && (
+                <div className="py-2 border-b border-gray-100 last:border-b-0">
+                  <span className="font-medium text-gray-600 text-sm block mb-2">Print History</span>
+                  <div 
+                    className="text-gray-900 text-xs bg-gray-50 p-3 rounded-lg font-mono"
+                    dangerouslySetInnerHTML={{ __html: itemIdentifierDetails.dates_printed }}
+                  />
+                </div>
+              )}
+            </InfoCard>
+
             {/* Timestamps Card */}
             <InfoCard icon={FaClock} title="Timeline" iconColor="text-gray-600" bgColor="bg-gray-50">
               <DataRow label="Date Created" value={itemIdentifierDetails.date_created} />
-              <DataRow label="Number of Labels Printed" value={itemIdentifierDetails.printed} />
             </InfoCard>
 
             {/* Action Section for Mobile */}

@@ -3,8 +3,87 @@ import { useParams, useNavigate, Link } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useCrateDetails } from '../../utils/customApiHooks';
 import { frappeClient } from '../../utils/client';
-import { FaArrowLeft, FaBox, FaMapMarkerAlt, FaMinus, FaPlus, FaCheck, FaExclamationTriangle } from "react-icons/fa";
+import { FaArrowLeft, FaBox, FaCheck, FaExclamationTriangle, FaTimes } from "react-icons/fa";
 import { toast } from 'react-toastify';
+
+interface CrateItem {
+  item_code: string;
+  item_name: string;
+  uom: string;
+  qty: number;
+}
+
+interface ConfirmationModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  discrepancies: CrateItem[];
+  totalItems: number;
+  originalItems: any[];
+}
+
+function ConfirmationModal({ isOpen, onClose, onConfirm, discrepancies, totalItems, originalItems }: ConfirmationModalProps) {
+  if (!isOpen) return null;
+
+  const hasDiscrepancies = discrepancies.length > 0;
+  return (
+    <>
+      <div className="fixed inset-0 backdrop-blur-md z-40" onClick={onClose}></div>
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-t-xl w-full max-w-md mx-auto max-h-[80vh] overflow-y-auto">
+          <div className="p-6">
+            <h3 className="text-xl font-semibold mb-4">Confirm Verification</h3>
+            
+            {hasDiscrepancies ? (
+              <div className="mb-6">
+                <div className="flex items-center mb-3 text-amber-600">
+                  <FaExclamationTriangle className="mr-3 text-lg" />
+                  <span className="font-medium">Quantity Discrepancies Found</span>
+                </div>
+                <p className="text-gray-600 mb-4">
+                  {discrepancies.length} of {totalItems} items have quantity differences:
+                </p>
+                <div className="max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3 space-y-2">
+                  {discrepancies.map((item) => {
+                    const originalItem = originalItems.find((orig: any) => orig.item_code === item.item_code);
+                    return (
+                      <div key={item.item_code} className="text-sm">
+                        <div className="font-medium">{item.item_code}</div>
+                        <div className="text-gray-600">
+                          Original: {originalItem?.qty} → Verified: {item.qty}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center mb-6 text-green-600">
+                <FaCheck className="mr-3 text-lg" />
+                <span>All quantities confirmed.</span>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <button
+                onClick={onConfirm}
+                className="w-full py-3 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+              >
+                {hasDiscrepancies ? 'Confirm with Discrepancies' : 'Confirm Verification'}
+              </button>
+              <button
+                onClick={onClose}
+                className="w-full py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 function CrateVerification() {
   const navigate = useNavigate();
@@ -12,13 +91,12 @@ function CrateVerification() {
   const { user } = useAuth();
   const { data: crateDetailsResponse, error, isLoading } = useCrateDetails(user || '', crate_code || '');
   const crateDetails = crateDetailsResponse?.data;
-  const [items, setItems] = useState<any[]>([]); // Initialize as empty array
+  const [items, setItems] = useState<CrateItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showConfirmation, setShowConfirmation] = useState(false);
   
-  // Update items when crateDetails becomes available
   useEffect(() => {
     if (crateDetails?.items) {
-      // Convert quantities to numbers to prevent string concatenation
       const itemsWithNumericQty = crateDetails.items.map((item: any) => ({
         ...item,
         qty: Number(item.qty)
@@ -27,24 +105,31 @@ function CrateVerification() {
     }
   }, [crateDetails]);
   
-  // Calculate verification summary
-  const originalQuantity = crateDetails?.items?.reduce((sum: number, item: any) => sum + Number(item.qty), 0) || 0;
-  const currentQuantity = items.reduce((sum, item) => sum + Number(item.qty), 0);
-  const hasChanges = originalQuantity !== currentQuantity;
-  const hasDiscrepancies = items.some(item => {
+  const getItemStatus = (item: CrateItem) => {
     const originalItem = crateDetails?.items?.find((orig: any) => orig.item_code === item.item_code);
-    return originalItem && Number(originalItem.qty) !== Number(item.qty);
-  });
-  
+    if (!originalItem) return 'pending';
+    if (item.qty === Number(originalItem.qty)) return 'complete';
+    if (item.qty < Number(originalItem.qty)) return 'short';
+    if (item.qty > Number(originalItem.qty)) return 'over';
+    return 'pending';
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'complete': return <FaCheck className="text-green-600 text-sm" />;
+      case 'short': return <FaExclamationTriangle className="text-red-600 text-sm" />;
+      case 'over': return <FaExclamationTriangle className="text-amber-600 text-sm" />;
+      default: return <FaTimes className="text-gray-400 text-sm" />;
+    }
+  };
+
   async function submitVerificationRequest() {
     setIsSubmitting(true);
     try {
       const params = { user, crate_code, items };
-
-      const response = await frappeClient.post('pick_stream.api.submit_verification_request', params);
-
+      await frappeClient.post('pick_stream.api.submit_verification_request', params);
       toast.success("Verification submitted successfully");
-      navigate('/pick_stream/verification'); // Navigate back to verification list
+      navigate('/pick_stream/verification');
     }
     catch(err: any) {
       if (err.httpStatus === 404) {
@@ -57,9 +142,14 @@ function CrateVerification() {
     }
   }
 
-  const updateItemQuantity = (index: number, change: number) => {
+  const handleConfirmVerification = () => {
+    setShowConfirmation(false);
+    submitVerificationRequest();
+  };
+
+  const updateQuantity = (index: number, newValue: number) => {
     const newItems = [...items];
-    newItems[index].qty = Math.max(0, Number(newItems[index].qty) + change);
+    newItems[index].qty = Math.max(0, newValue);
     setItems(newItems);
   };
 
@@ -89,137 +179,150 @@ function CrateVerification() {
       </div>
     );
   }
-  
-  return (
-    <main className='bg-gray-50'>
-      <header className='flex flex-row items-center px-4 py-4 bg-white shadow-sm border-b border-gray-200'>
-        <Link 
-          to="/pick_stream/verification"
-          className="p-2 hover:bg-gray-100 rounded-lg transition-colors mr-3"
-        >
-          <FaArrowLeft size={20} className="text-gray-700"/>
-        </Link>
-        <div className="flex-1">
-          <h1 className='text-lg font-semibold text-gray-900 font-mono'>{crateDetails?.crate_code}</h1>
-          {crateDetails && (
-            <p className='text-sm text-gray-500 mt-1'>
-              {crateDetails.from_warehouse} → {crateDetails.to_warehouse}
-            </p>
-          )}
-        </div>
-      </header>
 
-      <div className='p-4'>
-        {crateDetails && crateDetails.items?.length > 0 ? (
-          <>
-            {/* Items List */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
-              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                <h2 className="text-sm font-medium text-gray-900">Items</h2>
-              </div>
-              
-              <div className="divide-y divide-gray-100">
-                {items.map((item, index) => {
-                  const originalItem = crateDetails?.items?.find((orig: any) => orig.item_code === item.item_code);
-                  const hasDiscrepancy = originalItem && Number(originalItem.qty) !== Number(item.qty);
-                  
-                  return (
-                    <div key={item.item_code} className={`p-4 ${hasDiscrepancy ? 'bg-yellow-50' : ''}`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1 min-w-0 mr-4">
-                          <div className="flex items-center mb-1">
-                            <p className="font-mono text-sm font-medium text-gray-900 mr-2">
-                              {item.item_code}
-                            </p>
-                            {hasDiscrepancy && (
-                              <div className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded-full">
-                                Changed
-                              </div>
-                            )}
-                          </div>
-                          <p className="text-sm text-gray-600 truncate">{item.item_name}</p>
-                          <div className="flex items-center space-x-4 mt-1">
-                            <span className="text-xs text-gray-500">UOM: {item.uom}</span>
-                            {hasDiscrepancy && (
-                              <span className="text-xs text-yellow-600">
-                                Original: {originalItem?.qty}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        
-                        <div className="flex items-center space-x-3">
-                          <button
-                            onClick={() => updateItemQuantity(index, -1)}
-                            disabled={item.qty <= 0}
-                            className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            aria-label="Decrease quantity"
-                          >
-                            <FaMinus size={12} className="text-gray-600" />
-                          </button>
-                          
-                          <div className="min-w-[3rem] text-center">
-                            <span className={`text-lg font-semibold ${
-                              hasDiscrepancy ? 'text-yellow-600' : 'text-gray-900'
-                            }`}>
-                              {item.qty}
-                            </span>
-                          </div>
-                          
-                          <button
-                            onClick={() => updateItemQuantity(index, 1)}
-                            className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
-                            aria-label="Increase quantity"
-                          >
-                            <FaPlus size={12} className="text-gray-600" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+  if (!crateDetails || items.length === 0) {
+    return (
+      <main className="flex flex-col">
+        <div className="bg-white border-b border-gray-200">
+          <div className="max-w-4xl mx-auto">
+            <div className="flex items-center justify-between p-4">
+              <div className="flex items-center space-x-4">
+                <Link 
+                  to="/pick_stream/verification"
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <FaArrowLeft size={20} className="text-gray-600" />
+                </Link>
+                <h1 className="text-xl font-semibold text-gray-900">Crate Verification</h1>
               </div>
             </div>
-            
-            {/* Submit Button */}
-            <div className="pb-4">
-              <button 
-                onClick={submitVerificationRequest}
-                disabled={isSubmitting}
-                className="w-full flex items-center justify-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                    Submitting...
-                  </>
-                ) : (
-                  <>
-                    <FaCheck className="mr-2" size={16} />
-                    Complete Verification
-                  </>
-                )}
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-12">
-            <div className="p-4 bg-gray-100 rounded-full mb-4">
+          </div>
+        </div>
+        <div className="flex-grow flex items-center justify-center p-6">
+          <div className="text-center">
+            <div className="p-4 bg-gray-100 rounded-full mb-4 inline-block">
               <FaBox className="text-gray-400" size={32} />
             </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Items Found</h3>
-            <p className="text-gray-500 text-center max-w-sm mb-4">
-              This crate appears to be empty or the items couldn't be loaded.
-            </p>
-            <Link 
-              to="/pick_stream/verification"
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Back to Verification List
-            </Link>
+            <p className="text-lg font-semibold mb-2">No Items Found</p>
+            <p className="text-sm text-gray-500">This crate appears to be empty or the items couldn't be loaded.</p>
           </div>
-        )}
+        </div>
+      </main>
+    );
+  }
+
+  const discrepancies = items.filter(item => getItemStatus(item) !== 'complete');
+  const hasDiscrepancies = discrepancies.length > 0;
+  
+  return (
+    <main>
+      {/* Header Section */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center justify-between p-4">
+            <div className="flex items-center space-x-4">
+              <Link 
+                to="/pick_stream/verification"
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <FaArrowLeft size={20} className="text-gray-600" />
+              </Link>
+              <div className="flex items-center space-x-3">
+                <div>
+                  <h1 className="text-xl font-semibold text-gray-900">{crateDetails?.crate_code}</h1>
+                  <p className="text-sm text-gray-500">{crateDetails.from_warehouse} → {crateDetails.to_warehouse}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
+
+      <div className="p-4">
+        <div className="space-y-3 mb-6">
+          {items.map((item, index) => {
+            const status = getItemStatus(item);
+            const originalItem = crateDetails?.items?.find((orig: any) => orig.item_code === item.item_code);
+            
+            return (
+              <div key={item.item_code} className="bg-white rounded-lg p-4 shadow-sm">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1 min-w-0 mr-3">
+                    <div className="font-medium text-base mb-1">{item.item_code}</div>
+                    <div className="text-sm text-gray-600 line-clamp-2 mb-1">{item.item_name}</div>
+                    <div className="text-xs text-gray-500 bg-gray-100 inline-block px-2 py-1 rounded">
+                      {item.uom}
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    {getStatusIcon(status)}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                  <div className="text-center p-3 bg-gray-50 rounded-lg">
+                    <div className="text-xs text-gray-500 mb-1">Original</div>
+                    <div className="font-semibold text-lg">{originalItem?.qty}</div>
+                  </div>
+                  <div className="text-center p-3 bg-blue-50 rounded-lg">
+                    <div className="text-xs text-gray-500 mb-1">Verified</div>
+                    <div className="font-semibold text-lg text-blue-700">{item.qty}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => updateQuantity(index, item.qty - 1)}
+                    disabled={item.qty <= 0}
+                    className="w-12 h-12 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 flex items-center justify-center text-xl font-semibold active:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    value={item.qty}
+                    onChange={(e) => updateQuantity(index, parseInt(e.target.value) || 0)}
+                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg text-center text-lg font-semibold focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                    min="0"
+                  />
+                  <button
+                    onClick={() => updateQuantity(index, item.qty + 1)}
+                    className="w-12 h-12 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 flex items-center justify-center text-xl font-semibold active:bg-gray-300"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="p-4">
+        <button 
+          className="w-full py-4 px-6 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={() => setShowConfirmation(true)}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <span className="flex items-center justify-center">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+              Submitting...
+            </span>
+          ) : (
+            hasDiscrepancies ? `Review & Submit (${discrepancies.length})` : 'Complete Verification'
+          )}
+        </button>
+      </div>
+
+      <ConfirmationModal
+        isOpen={showConfirmation}
+        onClose={() => setShowConfirmation(false)}
+        onConfirm={handleConfirmVerification}
+        discrepancies={discrepancies}
+        totalItems={items.length}
+        originalItems={crateDetails?.items || []}
+      />
     </main>
   );
 }

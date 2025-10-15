@@ -10,7 +10,7 @@ from frappe.model.document import Document
 from frappe.utils.nestedset import get_descendants_of
 from frappe.utils import cint, flt, floor, get_link_to_form
 
-from pick_stream import core, utils, exceptions
+from pick_stream import core, utils, exceptions, validations
 
 
 class Source(Document):
@@ -23,11 +23,8 @@ class Source(Document):
         self.update_streams()
 
     def on_update(self):
-        frappe.log_error('on_update','on_update')
         if self.is_completed() and self.status != 'Completed':
             self.db_set('status', 'Completed')
-            # Check if all sources for this user's MR are complete
-            # If yes, close the user's ToDo
             utils.check_and_complete_mr_todo(self.material_request, self.user)
 
     def is_completed(self):
@@ -50,10 +47,10 @@ class Source(Document):
             )
             
             if not stream_name:
-                stream_name = core.create_stream(self, crate_code)
+                stream_name = create_stream(self, crate_code)
 
             else:
-                core.update_stream(self, stream_name, status)
+                update_stream(self, stream_name, status)
 
     def get_crates_status(self):
         crates_status = frappe._dict()
@@ -204,7 +201,7 @@ class Source(Document):
             
             crates_to_close = picking_crates[:-1]
             for crate_code, _ in crates_to_close:
-                core.close_crate(crate_code, commit=False)
+                utils.close_crate(crate_code, commit=False)
                 crates_status[crate_code] = 'Waiting' # Update the status after closing
 
         return crates_status
@@ -656,3 +653,115 @@ def natural_sort_key(warehouse_name):
     def convert(text):
         return int(text) if text.isdigit() else text.lower()
     return [convert(c) for c in re.split(r'(\d+)', warehouse_name)]
+
+
+def create_stream(source:dict, crate_code:str) -> str:
+    user = source.user
+    material_request = source.material_request
+    item_group = source.item_group
+    from_warehouse = source.from_warehouse
+    to_warehouse = source.to_warehouse
+
+    validations.validate_exists('User', user)
+    validations.validate_exists('Material Request', material_request)
+    validations.validate_user_assigned_to_mr(material_request, user)
+    validations.validate_user_assigned_to_item_group(user, item_group)
+    
+    stream = frappe.new_doc('Stream')
+    stream.update({
+        'material_request': material_request,
+        'from_warehouse': from_warehouse,
+        'to_warehouse': to_warehouse,
+        'crate_code': crate_code,
+        'item_group': item_group,
+        'source': source.name,
+        'user': user
+    })
+
+    crate_available = utils.check_crate_availability(crate_code, user, from_stream=True) 
+    if not crate_available:
+        raise exceptions.ValidationError(f"Crate '{crate_code}' is not available. Contact Supervisor.")
+
+    item_crate_qty_map = {}
+    for item_crate in source.item_crates:
+        if item_crate.crate_code == crate_code:
+            item_crate_qty_map[item_crate.source_item] = item_crate.qty
+
+    matching_source_item_set = set(item_crate_qty_map.keys())
+
+    for item in source.items:
+        if item.name in matching_source_item_set:
+            crate_qty = item_crate_qty_map[item.name]
+
+            stream.append('items', {
+                'item_code': item.item_code,
+                'item_name': item.item_name,
+                'item_group': item.item_group,
+                'description': item.description,
+                'from_warehouse': item.from_warehouse,
+                'to_warehouse': item.to_warehouse,
+                'uom': item.uom,
+                'conversion_factor': item.conversion_factor,
+                'requested_qty': item.requested_qty,
+                'scanned_qty': crate_qty,
+                'scanned': item.scanned,
+                'source': source.name,
+                'material_request': item.material_request,
+                'material_request_item': item.material_request_item
+            })
+
+    frappe.db.savepoint('create_stream')
+
+    try:
+        stream.insert()
+        frappe.db.commit()
+        return stream.name
+
+    except Exception as e:
+        frappe.db.rollback()
+        raise exceptions.ValidationError(str(e))
+
+def update_stream(source:dict, stream_name:str, status:str) -> dict:
+    stream = frappe.get_doc('Stream', stream_name)
+    stream.update({'status': status})
+
+    stream.items = []
+
+    item_crate_qty_map = {}
+    for item_crate in source.item_crates:
+        if item_crate.crate_code == stream.crate_code:
+            item_crate_qty_map[item_crate.source_item] = item_crate.qty
+
+    matching_source_item_set = set(item_crate_qty_map.keys())
+
+    for item in source.items:
+        if item.name in matching_source_item_set:
+            crate_qty = item_crate_qty_map[item.name]
+
+            stream.append('items', {
+                'item_code': item.item_code,
+                'item_name': item.item_name,
+                'item_group': item.item_group,
+                'description': item.description,
+                'from_warehouse': item.from_warehouse,
+                'to_warehouse': item.to_warehouse,
+                'uom': item.uom,
+                'conversion_factor': item.conversion_factor,
+                'requested_qty': item.requested_qty,
+                'scanned_qty': crate_qty,
+                'scanned': item.scanned,
+                'source': source.name,
+                'material_request': item.material_request,
+                'material_request_item': item.material_request_item
+            })
+
+    frappe.db.savepoint('update_stream')
+
+    try:
+        stream.save()
+        frappe.db.commit()
+        return stream
+
+    except Exception as e:
+        frappe.db.rollback()
+        raise exceptions.ValidationError(str(e))
