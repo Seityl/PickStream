@@ -46,7 +46,7 @@
    "reqd": 1
   },
   {
-   "description": "Configuration settings for integrating with the Common Unix Printing System (CUPS) server. CUPS handles all printing operations including pick lists, identifier labels, and inventory reports throughout the pick stream process.",
+   "description": "Configuration settings for integrating with the Common Unix Printing System (CUPS) server. CUPS handles all printing operations throughout the pick stream process.",
    "fieldname": "cups_settings_section",
    "fieldtype": "Section Break",
    "label": "CUPS Settings"
@@ -55,7 +55,8 @@
    "description": "IP address or hostname of the CUPS print server. This should be the network address where your CUPS server is running, typically in format like '192.168.1.100' or 'print-server.company.com'.",
    "fieldname": "host",
    "fieldtype": "Data",
-   "label": "Host"
+   "label": "Host",
+   "reqd": 1
   },
   {
    "fieldname": "column_break_ujis",
@@ -65,37 +66,41 @@
    "description": "Network port number for CUPS server communication. Standard CUPS port is 631, but may vary depending on your server configuration and security requirements.",
    "fieldname": "port",
    "fieldtype": "Int",
-   "label": "Port"
+   "label": "Port",
+   "non_negative": 1,
+   "reqd": 1
   },
   {
-   "description": "Configure item classification rules for barcode scanning and inventory management. Define which types of items cannot be transported in standard crates due to size, weight, or special handling requirements, along with their unique barcode prefix identifiers.",
+   "description": "Configure item classification rules for barcode scanning and inventory management. Define which types of items cannot be transported in standard crates due to size, weight, or special handling requirements, along with their unique barcode prefix identifiers.<br>\n<strong>Note (October 2025):</strong> In the current version, only item types <em>box</em> or <em>other</em> are supported. Dynamic additional of item types will be introduced in future versions.\n",
    "fieldname": "barcode_settings_section",
    "fieldtype": "Section Break",
    "label": "Barcode Settings"
   },
   {
-   "description": "Master table defining different categories of inventory items and their handling requirements.",
+   "description": "Master table defining different categories of inventory items.",
    "fieldname": "item_types",
    "fieldtype": "Table",
    "label": "Item Types",
    "options": "Pick Stream Item Type"
   },
   {
-   "description": "Configuration parameters for crate management within the pick stream system.",
+   "description": "Configuration parameters for crate management within the Pick Stream system.<br>\n<strong>Note (October 2025):</strong> In the current version, only the colors green, gray, red, yellow, and blue are supported. Dynamic addition of colors will be introduced in future versions.\n",
    "fieldname": "crate_settings_section",
    "fieldtype": "Section Break",
    "label": "Crate Settings"
   },
   {
+   "description": "Master table defining different crate colors along with their code ranges.",
    "fieldname": "crate_settings",
    "fieldtype": "Table",
    "label": "Crate Settings",
    "options": "Crate Settings"
   },
   {
-   "description": "Primary warehouse configuration settings that control default behavior for material sourcing and inventory allocation.",
+   "description": "Primary warehouse configuration settings that control default behavior for material sourcing and warehouse - branch mapping.",
    "fieldname": "warehouse_settings_section",
    "fieldtype": "Section Break",
+   "hide_border": 1,
    "label": "Warehouse Settings"
   },
   {
@@ -209,7 +214,7 @@
  "in_create": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-10-06 21:38:59.938888",
+ "modified": "2025-10-16 23:29:08.174246",
  "modified_by": "jeriel@jollysonline.com",
  "module": "Pick Stream",
  "name": "Pick Stream Settings",

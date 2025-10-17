@@ -58,8 +58,7 @@ export default function MaterialRequestItem(props: MatReqItem) {
       className="block transition-all duration-200 hover:translate-y-[-1px] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-2 rounded-xl"
     >
       <div 
-        className="relative p-4 bg-white border-l-4 hover:shadow-md transition-shadow duration-200"
-        style={{ borderLeftColor: currentStatus.color }}
+        className="relative p-4 bg-white hover:shadow-md transition-shadow duration-200"
       >
         {/* Header Section */}
         <div className="flex items-start justify-between mb-3">

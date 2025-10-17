@@ -50,14 +50,22 @@ frappe.ui.form.on('Pick Stream Workflow', {
 	
 	transit_after_verification: function(frm, cdt, cdn) {
 		validate_workflow_flags(frm, cdt, cdn);
+		validate_workflow_uniqueness(frm, cdt, cdn);
 	},
 	
 	receiving_after_verification: function(frm, cdt, cdn) {
 		validate_workflow_flags(frm, cdt, cdn);
+		validate_workflow_uniqueness(frm, cdt, cdn);
 	},
 	
 	verification_after_receiving: function(frm, cdt, cdn) {
 		validate_workflow_flags(frm, cdt, cdn);
+		validate_workflow_uniqueness(frm, cdt, cdn);
+	},
+	
+	receiving_after_transit: function(frm, cdt, cdn) {
+		validate_workflow_flags(frm, cdt, cdn);
+		validate_workflow_uniqueness(frm, cdt, cdn);
 	},
 
 	picking_warehouse_1: function(frm, cdt, cdn) {
@@ -73,47 +81,118 @@ frappe.ui.form.on('Pick Stream Workflow', {
 	}
 });
 
+function get_workflow_path(row) {
+	// Pick → Transit → Receive → Verify
+	if (row.receiving_after_transit && row.verification_after_receiving) {
+		return "Pick → Transit → Receive → Verify";
+	}
+	
+	// Pick → Verify → Transit → Receive
+	if (row.transit_after_verification && row.receiving_after_verification) {
+		return "Pick → Verify → Transit → Receive";
+	}
+	
+	// Pick → Verify → Receive
+	if (row.receiving_after_verification && !row.transit_after_verification) {
+		return "Pick → Verify → Receive";
+	}
+	
+	// Pick → Transit → Receive
+	if (row.receiving_after_transit && !row.verification_after_receiving) {
+		return "Pick → Transit → Receive";
+	}
+	
+	// Pick → Receive → Verify
+	if (row.verification_after_receiving && !row.receiving_after_transit) {
+		return "Pick → Receive → Verify";
+	}
+	
+	// Pick → Receive (direct)
+	if (!row.verification_after_receiving && 
+		!row.receiving_after_verification && 
+		!row.transit_after_verification && 
+		!row.receiving_after_transit) {
+		return "Pick → Receive (Direct)";
+	}
+	
+	return "Unknown Workflow";
+}
+
 function validate_workflow_uniqueness(frm, cdt, cdn) {
 	let row = locals[cdt][cdn];
 	let workflows = frm.doc.workflow_settings || [];
-	let duplicates = workflows.filter(w => 
-		w.target_warehouse === row.target_warehouse && 
-		w.name !== row.name &&
-		w.is_active
-	);
+	
+	// Get the workflow path for the current row
+	let current_workflow_path = get_workflow_path(row);
+	
+	// Find duplicates: same target warehouse, same workflow path, different row, and active
+	let duplicates = workflows.filter(w => {
+		if (w.name === row.name || !w.is_active || !row.is_active) {
+			return false;
+		}
+		
+		if (w.target_warehouse !== row.target_warehouse) {
+			return false;
+		}
+		
+		// Get workflow path for comparison
+		let workflow_path = get_workflow_path(w);
+		return workflow_path === current_workflow_path;
+	});
 	
 	if (duplicates.length > 0) {
 		frappe.msgprint({
 			title: __('Duplicate Workflow'),
-			message: __('An active workflow already exists for warehouse: {0}', [row.target_warehouse]),
+			message: __('An active workflow already exists for warehouse: {0} with workflow path: {1}', 
+				[row.target_warehouse, current_workflow_path]),
 			indicator: 'red'
 		});
-		frappe.model.set_value(cdt, cdn, 'target_warehouse', '');
+		
+		// Clear the is_active flag instead of target_warehouse to allow different workflows
+		frappe.model.set_value(cdt, cdn, 'is_active', 0);
 	}
 }
 
 function validate_workflow_flags(frm, cdt, cdn) {
 	let row = locals[cdt][cdn];
 	
-	if (row.transit_after_verification && row.receiving_after_verification) {
+	if (row.transit_after_verification && row.receiving_after_transit) {
 		frappe.msgprint({
 			title: __('Invalid Configuration'),
-			message: __('Cannot enable both "Transit After Verification" and "Receiving After Verification" simultaneously'),
+			message: __('Cannot enable both "Transit After Verification" and "Receiving After Transit" simultaneously'),
 			indicator: 'red'
 		});
-		frappe.model.set_value(cdt, cdn, 'receiving_after_verification', 0);
+		frappe.model.set_value(cdt, cdn, 'receiving_after_transit', 0);
 		frappe.model.set_value(cdt, cdn, 'transit_after_verification', 0);
 	}
 	
-	if (row.verification_after_receiving && (row.transit_after_verification || row.receiving_after_verification)) {
+	if (row.verification_after_receiving && row.transit_after_verification) {
 		frappe.msgprint({
 			title: __('Invalid Configuration'),
-			message: __('Cannot enable "Transit After Verification" or "Receiving After Verification" simultaneously when "Verification After Receiving" is enabled.'),
-			indicator: 'yellow'
+			message: __('Cannot enable "Verification After Receiving" and "Transit After Verification" simultaneously.'),
+			indicator: 'red'
+		});
+		frappe.model.set_value(cdt, cdn, 'verification_after_receiving', 0);
+		frappe.model.set_value(cdt, cdn, 'transit_after_verification', 0);
+	}
+	
+	if (row.verification_after_receiving && row.receiving_after_verification) {
+		frappe.msgprint({
+			title: __('Invalid Configuration'),
+			message: __('Cannot enable both "Verification After Receiving" and "Receiving After Verification" simultaneously'),
+			indicator: 'red'
 		});
 		frappe.model.set_value(cdt, cdn, 'verification_after_receiving', 0);
 		frappe.model.set_value(cdt, cdn, 'receiving_after_verification', 0);
-		frappe.model.set_value(cdt, cdn, 'transit_after_verification', 0);
+	}
+	
+	if (row.receiving_after_transit && !row.verification_after_receiving) {
+		frappe.msgprint({
+			title: __('Invalid Configuration'),
+			message: __('When "Receiving After Transit" is enabled, "Verification After Receiving" must also be enabled'),
+			indicator: 'orange'
+		});
+		frappe.model.set_value(cdt, cdn, 'receiving_after_transit', 0);
 	}
 }
 

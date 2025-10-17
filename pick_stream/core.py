@@ -133,10 +133,13 @@ def get_user_material_requests(user: str) -> List:
             FROM `tabToDo` td
             INNER JOIN `tabMaterial Request` mr
                 ON td.reference_name = mr.name
+            INNER JOIN `tabWarehouse Group Map` wgm
+                ON wgm.warehouse = COALESCE(NULLIF(mr.set_from_warehouse, ''), %(default_warehouse)s)
             WHERE td.allocated_to = %(user)s
                 AND td.status = 'Open'
                 AND td.reference_type = 'Material Request'
                 AND mr.docstatus = 1
+                AND wgm.branch = %(user_branch)s  -- Filter by branch from warehouse group map
                 AND EXISTS (
                     SELECT 1
                     FROM `tabMaterial Request Item` mri
@@ -203,7 +206,8 @@ def get_user_material_requests(user: str) -> List:
         'user': user,
         'user_item_groups': tuple(user_item_groups),
         'child_warehouses': tuple(child_warehouses),
-        'default_warehouse': default_set_from_warehouse
+        'default_warehouse': default_set_from_warehouse,
+        'user_branch': user_branch
     }, as_dict=True)
     # Parse JSON
     for mr in mr_list:
@@ -1129,68 +1133,55 @@ def process_verification_request(
 
 def get_transit_list(user: str):
     validations.validate_exists('User', user)
-
-    stock_manager = utils.has_role(user, 'Stock Manager') 
-    if not stock_manager:
-        user_branch = utils.get_user_branch(user)
-        target_warehouse = get_workflow_target_warehouse(user, user_branch)
-        workflow_details = utils.get_workflow_details(target_warehouse)
-
-        # TODO: Create global transit role rather than by workflow
-        validate_role(user, workflow_details.transit_user_role)
-
+    settings = utils.get_settings()
+    privileged = utils.has_role(user, settings.privileged_user_role) 
+    if not privileged:
+        # Regular users: Ensure they have transit permission
+        validations.validate_permission(user, 'transit')
     workflow_details = utils.get_workflow_details()
     workflows = workflow_details
-
     crate_verification_conditions = []
     identifier_verification_conditions = []
-
     for workflow in workflows:
         target_warehouse = workflow.target_warehouse
-        
         picking_warehouse_stores = workflow.picking_warehouse_stores
-        
+        # Require transit if sourced from warehouse that does not match store
         transit_warehouses = [
             warehouse for warehouse, store in picking_warehouse_stores.items() 
             if store != target_warehouse
         ]
-
         if workflow.transit_after_verification:
             crate_condition_parts = []
             identifier_condition_parts = []
-            
-            # Always require transit if sourced from warehouse that does not match store
             for warehouse in transit_warehouses:
-                crate_condition_parts.append(f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.crate_closed = 1 AND ic.verified = 1 AND ic.received = 0)")
-                identifier_condition_parts.append(f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.verified = 1 AND ic.received = 0)")
-            
+                crate_condition_parts.append(
+                    f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.crate_closed = 1 AND ic.verified = 1 AND ic.received = 0)"
+                )
+                identifier_condition_parts.append(
+                    f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.verified = 1 AND ic.received = 0)"
+                )
             if crate_condition_parts:
                 crate_verification_conditions.append(f"({' OR '.join(crate_condition_parts)})")
-
             if identifier_condition_parts:
                 identifier_verification_conditions.append(f"({' OR '.join(identifier_condition_parts)})")
-
         else:
             crate_condition_parts = []
             identifier_condition_parts = []
-            
-            # Always require transit if sourced from warehouse that does not match store
             for warehouse in transit_warehouses:
-                crate_condition_parts.append(f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.crate_closed = 1 AND ic.received = 0)")
-                identifier_condition_parts.append(f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.received = 0)")
-            
+                crate_condition_parts.append(
+                    f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.crate_closed = 1 AND ic.received = 0)"
+                )
+                identifier_condition_parts.append(
+                    f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.received = 0)"
+                )
             if crate_condition_parts:
                 crate_verification_conditions.append(f"({' OR '.join(crate_condition_parts)})")
-
             if identifier_condition_parts:
                 identifier_verification_conditions.append(f"({' OR '.join(identifier_condition_parts)})")
-   
     if not crate_verification_conditions and not identifier_verification_conditions:
         raise exceptions.SystemError('No transit conditions found')
-
     crate_data = []
     identifier_data = []
-
     if crate_verification_conditions:
         crate_verification_clause = ' OR '.join(crate_verification_conditions)
         crate_query = f"""
@@ -1208,7 +1199,6 @@ def get_transit_list(user: str):
             ORDER BY ic.modified ASC
         """
         crate_data = frappe.db.sql(crate_query, as_dict=True)
-
     if identifier_verification_conditions:
         identifier_verification_clause = ' OR '.join(identifier_verification_conditions)
         identifier_query = f"""
@@ -1226,7 +1216,6 @@ def get_transit_list(user: str):
             ORDER BY ic.modified ASC
         """
         identifier_data = frappe.db.sql(identifier_query, as_dict=True)
-
     crate_details = []
     if crate_data:
         for row in crate_data:
@@ -1235,7 +1224,6 @@ def get_transit_list(user: str):
                 'source_warehouse': row.from_warehouse,
                 'target_warehouse': row.to_warehouse
             })
-
     identifier_details = []
     if identifier_data:
         for row in identifier_data:
@@ -1244,11 +1232,11 @@ def get_transit_list(user: str):
                 'source_warehouse': row.from_warehouse,
                 'target_warehouse': row.to_warehouse
             })
-
     return {
         'crate_details': crate_details,
         'identifier_details': identifier_details
     }
+
 
 def process_transit_request(
     user: str,

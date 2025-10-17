@@ -251,7 +251,7 @@ function VerificationList() {
         <div className="flex-1">
           <h1 className='text-lg font-semibold text-gray-900'>Verification Queue</h1>
           <p className='text-sm text-gray-500 mt-1'>
-            {totalCount} items awaiting verification
+            {totalCount} awaiting verification
           </p>
         </div>
         <button

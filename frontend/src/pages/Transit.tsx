@@ -178,7 +178,7 @@ function TransitList() {
           <FaArrowLeft size={20} className="text-gray-700"/>
         </Link>
         <div className="flex-1">
-          <h1 className='text-lg font-semibold text-gray-900'>Transit Management</h1>
+          <h1 className='text-lg font-semibold text-gray-900'>Transit Queue</h1>
           <p className='text-sm text-gray-500 mt-1'>
             {crateCount + identifierCount} available for transit
           </p>

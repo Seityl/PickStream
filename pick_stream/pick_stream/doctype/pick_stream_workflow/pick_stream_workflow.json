@@ -23,6 +23,7 @@
   "picking_store_2",
   "picking_store_3",
   "verification_stage_section",
+  "column_break_evas",
   "verification_branch_1",
   "verification_branch_2",
   "verification_branch_3",
@@ -30,14 +31,14 @@
   "verification_after_receiving",
   "transit_stage_section",
   "transit_after_verification",
+  "receiving_after_transit",
   "transit_warehouse",
-  "column_break_4",
   "receiving_stage_section",
   "receiving_after_verification",
-  "column_break_5",
   "workflow_settings_section",
   "send_notifications",
-  "column_break_6"
+  "section_break_mkml",
+  "notes"
  ],
  "fields": [
   {
@@ -92,17 +93,9 @@
    "label": "Transit Stage Configuration"
   },
   {
-   "fieldname": "column_break_4",
-   "fieldtype": "Column Break"
-  },
-  {
    "fieldname": "receiving_stage_section",
    "fieldtype": "Section Break",
    "label": "Receiving Stage Configuration"
-  },
-  {
-   "fieldname": "column_break_5",
-   "fieldtype": "Column Break"
   },
   {
    "fieldname": "workflow_settings_section",
@@ -110,15 +103,10 @@
    "label": "Workflow Settings"
   },
   {
-   "fieldname": "column_break_6",
-   "fieldtype": "Column Break"
-  },
-  {
    "columns": 2,
    "description": "Primary picking warehouse location.",
    "fieldname": "picking_warehouse_1",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "Picking Warehouse 1",
    "options": "Warehouse",
    "reqd": 1
@@ -173,7 +161,6 @@
    "description": "Primary verification branch.",
    "fieldname": "verification_branch_1",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "Verification Branch 1",
    "options": "Branch",
    "reqd": 1
@@ -204,21 +191,28 @@
   },
   {
    "default": "0",
-   "description": "Check if items must be received before being verified.",
+   "description": "Check if items must be received before being verified. This setting should be used when items follow:\n\n<br><br>\nPick \u2192 Transit \u2192 Receive \u2192 Verify",
    "fieldname": "verification_after_receiving",
    "fieldtype": "Check",
    "label": "Verification After Receiving"
   },
   {
    "default": "0",
-   "description": "Check if items must be verified before being transited.",
+   "description": "Check if items must be verified before being transited. This setting should be used when items follow:\n<br><br>\nPick \u2192 Verify \u2192 Transit \u2192 Receive",
    "fieldname": "transit_after_verification",
    "fieldtype": "Check",
    "label": "Transit After Verification"
   },
   {
    "default": "0",
-   "description": "Check if items must be verified before being received.",
+   "description": "Check if items must be received before being verified, with transit in between. This setting should be used when items follow:\n<br><br>\nPick \u2192 Transit \u2192 Receive \u2192 Verify",
+   "fieldname": "receiving_after_transit",
+   "fieldtype": "Check",
+   "label": "Receiving After Transit"
+  },
+  {
+   "default": "0",
+   "description": "Check if items must be verified before being received. This setting should be used when items follow:\n<br><br>\nPick \u2192 Verify \u2192 Receive\n<br><br>\nor\n<br><br>\nPick \u2192 Verify \u2192 Transit \u2192 Receive",
    "fieldname": "receiving_after_verification",
    "fieldtype": "Check",
    "label": "Receiving After Verification"
@@ -253,13 +247,27 @@
    "label": "Picking Store 3",
    "mandatory_depends_on": "doc.picking_warehouse_3",
    "options": "Warehouse"
+  },
+  {
+   "description": "If a user does not have privileged access, they must be assigned to one of these branches in order to verify items for this workflow.",
+   "fieldname": "column_break_evas",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_mkml",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Text Editor",
+   "label": "Notes"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-10-14 14:38:04.099638",
+ "modified": "2025-10-16 01:35:23.380437",
  "modified_by": "jeriel@jollysonline.com",
  "module": "Pick Stream",
  "name": "Pick Stream Workflow",
