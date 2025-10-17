@@ -133,6 +133,7 @@
    "label": "Workflow Settings"
   },
   {
+   "description": "Define material movement workflows for specific destination warehouses. Each workflow controls the sequence of picking, verification, transit, and receiving operations required to deliver goods from source warehouses to target locations. Multiple workflows can be configured for the same destination, each with customized operational sequences.",
    "fieldname": "workflow_settings_section",
    "fieldtype": "Section Break",
    "hide_border": 1,
@@ -214,7 +215,7 @@
  "in_create": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-10-16 23:29:08.174246",
+ "modified": "2025-10-16 23:35:11.844158",
  "modified_by": "jeriel@jollysonline.com",
  "module": "Pick Stream",
  "name": "Pick Stream Settings",
