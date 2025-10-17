@@ -576,69 +576,130 @@ def process_scan_details(
 
  
 def get_verification_list(user:str) -> Dict:
+    """
+    Returns list of crates and identifiers available for verification for a specific user.
+    
+    Verification items are determined by workflow configuration:
+    - Pick → Transit → Receive → Verify: Items must be received first
+    - Pick → Verify → Transit → Receive: Items ready after picking (closed crates)
+    - Pick → Verify → Receive: Items ready after picking (closed crates)
+    
+    Only items that require AND are ready for verification are returned.
+    """
     validations.validate_exists('User', user)
+    # Get settings and check permissions
     settings = utils.get_settings()
-    privileged = utils.has_role(user, settings.privileged_user_role) 
+    privileged = utils.has_role(user, settings.privileged_user_role)
     if not privileged:
         # Regular users: Restrict to their assigned branch and workflow
-        # This ensures users only see items destined for their warehouse
         user_branch = utils.get_user_branch(user)
+        # Get the target warehouse fot this user's branch
         target_warehouse = utils.get_workflow_target_warehouse(user, user_branch)
-        workflow_details = utils.get_workflow_details(target_warehouse)
+        # Get workflow(s) for this target warehouse
+        workflows_for_target = utils.get_workflow_details(target_warehouse=target_warehouse)
+        # Ensure user has verification permission
         validations.validate_permission(user, 'verification')
-        if user_branch not in workflow_details.verification_branches:
-            raise exceptions.PermissionError(
-                f"User '{user}' is not authorized to verify items for {target_warehouse} from '{user_branch}'. Contact Supervisor."
+        # Check if user's branch is authorized for verification in ANY of the workflows
+        # Since workflows is a list, we need to check if user_branch matches ANY workflow
+        if isinstance(workflows_for_target, list):
+            authorized = any(
+                user_branch == wf.verification_branch 
+                for wf in workflows_for_target
             )
-        workflows = [workflow_details]
+            if not authorized:
+                raise exceptions.PermissionError(
+                    f"User '{user}' is not authorized to verify items for {target_warehouse} "
+                    f"from '{user_branch}'. Contact Supervisor."
+                )
+            workflows = workflows_for_target
+        else:
+            # Single workflow returned
+            if user_branch != workflows_for_target.verification_branch:
+                raise exceptions.PermissionError(
+                    f"User '{user}' is not authorized to verify items for {target_warehouse} "
+                    f"from '{user_branch}'. Contact Supervisor."
+                )
+            workflows = [workflows_for_target]
     else:
         # Privileged users: Get ALL workflows
-        # No permission or branch checks needed - they have global access
         workflows = utils.get_workflow_details()
     # Build dynamic SQL conditions for each workflow
-    # Conditions vary based on workflow configuration (verification timing and transit requirements)
     crate_verification_conditions = []
     identifier_verification_conditions = []
     for workflow in workflows:
+        target_warehouse = workflow.target_warehouse
+        picking_warehouse = workflow.picking_warehouse
         # Base conditions: Items must be headed to the workflow's target warehouse and not yet verified
-        base_crate_condition = f"(s.to_warehouse = '{workflow.target_warehouse}' AND ic.crate_closed = 1 AND ic.verified = 0"
-        base_identifier_condition = f"(s.to_warehouse = '{workflow.target_warehouse}' AND ic.verified = 0"
-        if workflow.transit_after_verification:
-            # Transit requirement: If items must transit after verification,
-            # only show items that haven't transited yet (prevents re-verification)
-            base_crate_condition += ' AND ic.transited = 0'
-            base_identifier_condition += ' AND ic.transited = 0'
-        # Verification timing determines which items appear in the queue:
-        # 1. verification_after_receiving: Items must be received first (received = 1)
-        #    Use case: Verify items AFTER they physically arrive
-        # 2. receiving_after_verification: Items verified before receiving (received = 0)
-        #    Use case: Verify items and receive after approval
+        base_crate_condition = (
+            f"(s.from_warehouse = '{picking_warehouse}' "
+            f"AND s.to_warehouse = '{target_warehouse}' "
+            f"AND ic.crate_closed = 1 "
+            f"AND ic.verified = 0"
+        )
+        base_identifier_condition = (
+            f"(s.from_warehouse = '{picking_warehouse}' "
+            f"AND s.to_warehouse = '{target_warehouse}' "
+            f"AND ic.verified = 0"
+        )
+        # Determine verification conditions based on workflow path
         crate_condition = None
         identifier_condition = None
         if workflow.verification_after_receiving:
-            # Only show items that have already been received
-            crate_condition = f'{base_crate_condition} AND ic.received = 1)'
-            identifier_condition = f'{base_identifier_condition} AND ic.received = 1)'
+            # WORKFLOW PATH: Pick → Transit → Receive → Verify
+            # Items must be received before verification
+            # Items should also be transited (since transit comes before receive)
+            crate_condition = (
+                f"{base_crate_condition} "
+                f"AND ic.transited = 1 "
+                f"AND ic.received = 1)"
+            )
+            identifier_condition = (
+                f"{base_identifier_condition} "
+                f"AND ic.transited = 1 "
+                f"AND ic.received = 1)"
+            )
+        elif workflow.transit_after_verification:
+            # WORKFLOW PATH: Pick → Verify → Transit → Receive
+            # Verification happens after picking but before transit
+            # Only show items that haven't been transited yet (prevents re-verification)
+            crate_condition = (
+                f"{base_crate_condition} "
+                f"AND ic.transited = 0 "
+                f"AND ic.received = 0)"
+            )
+            identifier_condition = (
+                f"{base_identifier_condition} "
+                f"AND ic.transited = 0 "
+                f"AND ic.received = 0)"
+            )
         elif workflow.receiving_after_verification:
-            # Only show items that haven't been received yet
-            crate_condition = f'{base_crate_condition} AND ic.received = 0)'
-            identifier_condition = f'{base_identifier_condition} AND ic.received = 0)'
+            # WORKFLOW PATH: Pick → Verify → Receive (NO TRANSIT)
+            # Verification happens after picking but before receiving
+            # No transit in this workflow
+            crate_condition = (
+                f"{base_crate_condition} "
+                f"AND ic.received = 0)"
+            )
+            identifier_condition = (
+                f"{base_identifier_condition} "
+                f"AND ic.received = 0)"
+            )
         else:
             # This should never happen due to validation, but handle it gracefully
             raise exceptions.SystemError(
-                f'Invalid workflow configuration for {workflow.target_warehouse}. '
+                f'Invalid workflow configuration for {target_warehouse}. '
                 'No verification timing flag is set. Contact IT.'
             )
-        # Only add conditions if they were properly defined
+        # Add conditions if they were properly defined
         if crate_condition:
             crate_verification_conditions.append(crate_condition)
         if identifier_condition:
             identifier_verification_conditions.append(identifier_condition)
     # Combine all workflow conditions with OR
-    # This allows privileged users to see items from multiple workflows,
-    # while regular users will only have conditions for their single workflow
+    # This allows privileged users to see items from multiple workflows
     crate_where_clause = ' OR '.join(crate_verification_conditions)
     identifier_where_clause = ' OR '.join(identifier_verification_conditions)
+    # Build and execute queries
     crate_query = f"""
         SELECT DISTINCT 
             ic.crate_code,
@@ -667,22 +728,23 @@ def get_verification_list(user:str) -> Dict:
     """
     crate_data = frappe.db.sql(crate_query, as_dict=True)
     identifier_data = frappe.db.sql(identifier_query, as_dict=True)
-    crate_details = []
-    if crate_data:
-        for row in crate_data:
-            crate_details.append({
-                'crate_code': row.crate_code,
-                'source_warehouse': row.from_warehouse,
-                'target_warehouse': row.to_warehouse
-            })
-    identifier_details = []
-    if identifier_data:
-        for row in identifier_data:
-            identifier_details.append({
-                'identifier_code': row.identifier_code,
-                'source_warehouse': row.from_warehouse,
-                'target_warehouse': row.to_warehouse
-            })
+    # Format results
+    crate_details = [
+        {
+            'crate_code': row.crate_code,
+            'source_warehouse': row.from_warehouse,
+            'target_warehouse': row.to_warehouse
+        }
+        for row in crate_data
+    ]
+    identifier_details = [
+        {
+            'identifier_code': row.identifier_code,
+            'source_warehouse': row.from_warehouse,
+            'target_warehouse': row.to_warehouse
+        }
+        for row in identifier_data
+    ]
     return {
         'crate_details': crate_details,
         'identifier_details': identifier_details
@@ -1133,59 +1195,92 @@ def process_verification_request(
 
 
 def get_transit_list(user: str):
+    """
+    Returns list of crates and identifiers available for transit for a specific user.
+    
+    Transit items are determined by workflow configuration:
+    - Pick → Transit → Receive → Verify: Items ready after picking (closed crates)
+    - Pick → Verify → Transit → Receive: Items ready after verification
+    - Pick → Verify → Receive: NO transit (skip these workflows)
+    
+    Only items that require AND are ready for transit are returned.
+    """
     validations.validate_exists('User', user)
+    # Get settings and check permissions
     settings = utils.get_settings()
-    privileged = utils.has_role(user, settings.privileged_user_role) 
+    privileged = utils.has_role(user, settings.privileged_user_role)
     if not privileged:
-        # Regular users: Ensure they have transit permission
+        # Regular users must have transit permission
         validations.validate_permission(user, 'transit')
-    workflow_details = utils.get_workflow_details()
-    workflows = workflow_details
+    # Get all active workflows
+    workflows = utils.get_workflow_details(settings=settings)
     crate_transit_conditions = []
     identifier_transit_conditions = []
     for workflow in workflows:
         target_warehouse = workflow.target_warehouse
-        picking_warehouse_stores = workflow.picking_warehouse_stores
-        # Require transit if sourced from warehouse that does not match store
-        transit_warehouses = [
-            warehouse for warehouse, store in picking_warehouse_stores.items() 
-            if store != target_warehouse
-        ]
-        if workflow.transit_after_verification:
-            # Pick → Verify → Transit → Receive
-            crate_condition_parts = []
-            identifier_condition_parts = []
-            for warehouse in transit_warehouses:
-                crate_condition_parts.append(
-                    f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.crate_closed = 1 AND ic.verified = 1 AND ic.received = 0)"
-                )
-                identifier_condition_parts.append(
-                    f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.verified = 1 AND ic.received = 0)"
-                )
-            if crate_condition_parts:
-                crate_transit_conditions.append(f"({' OR '.join(crate_condition_parts)})")
-            if identifier_condition_parts:
-                identifier_transit_conditions.append(f"({' OR '.join(identifier_condition_parts)})")
+        picking_warehouse = workflow.picking_warehouse
+        # Determine if this workflow includes transit stage
+        # Only two workflow paths include transit:
+        if workflow.verification_after_receiving:
+            # WORKFLOW PATH: Pick → Transit → Receive → Verify
+            # Transit happens AFTER picking but BEFORE receiving/verification
+            # Items must be: closed, not verified, not transited, not received
+            crate_transit_conditions.append(
+                f"(s.from_warehouse = '{picking_warehouse}' "
+                f"AND s.to_warehouse = '{target_warehouse}' "
+                f"AND ic.crate_closed = 1 "
+                f"AND ic.verified = 0 "
+                f"AND ic.transited = 0 "
+                f"AND ic.received = 0)"
+            )
+            identifier_transit_conditions.append(
+                f"(s.from_warehouse = '{picking_warehouse}' "
+                f"AND s.to_warehouse = '{target_warehouse}' "
+                f"AND ic.verified = 0 "
+                f"AND ic.transited = 0 "
+                f"AND ic.received = 0)"
+            )
+        elif workflow.transit_after_verification:
+            # WORKFLOW PATH: Pick → Verify → Transit → Receive
+            # Transit happens AFTER verification but BEFORE receiving
+            # Items must be: closed, verified, not transited, not received
+            crate_transit_conditions.append(
+                f"(s.from_warehouse = '{picking_warehouse}' "
+                f"AND s.to_warehouse = '{target_warehouse}' "
+                f"AND ic.crate_closed = 1 "
+                f"AND ic.verified = 1 "
+                f"AND ic.transited = 0 "
+                f"AND ic.received = 0)"
+            )
+            identifier_transit_conditions.append(
+                f"(s.from_warehouse = '{picking_warehouse}' "
+                f"AND s.to_warehouse = '{target_warehouse}' "
+                f"AND ic.verified = 1 "
+                f"AND ic.transited = 0 "
+                f"AND ic.received = 0)"
+            )
+        elif workflow.receiving_after_verification:
+            # WORKFLOW PATH: Pick → Verify → Receive
+            # NO TRANSIT in this workflow! Items go directly from verify to receive
+            # Skip adding conditions for this workflow
+            pass
         else:
-            crate_condition_parts = []
-            identifier_condition_parts = []
-            for warehouse in transit_warehouses:
-                crate_condition_parts.append(
-                    f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.crate_closed = 1 AND ic.received = 0)"
-                )
-                identifier_condition_parts.append(
-                    f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.received = 0)"
-                )
-            if crate_condition_parts:
-                crate_transit_conditions.append(f"({' OR '.join(crate_condition_parts)})")
-            if identifier_condition_parts:
-                identifier_transit_conditions.append(f"({' OR '.join(identifier_condition_parts)})")
+            # This should never happen due to validation, but handle it gracefully
+            raise exceptions.SystemError(
+                f'Invalid workflow configuration for {target_warehouse}. '
+                'No workflow timing flag is set. Contact IT.'
+            )
+    # If no workflows have transit, return empty lists
     if not crate_transit_conditions and not identifier_transit_conditions:
-        raise exceptions.SystemError('No transit conditions found')
+        return {
+            'crate_details': [],
+            'identifier_details': []
+        }
+    # Build and execute queries
     crate_data = []
     identifier_data = []
     if crate_transit_conditions:
-        crate_verification_clause = ' OR '.join(crate_transit_conditions)
+        crate_where_clause = ' OR '.join(crate_transit_conditions)
         crate_query = f"""
             SELECT DISTINCT 
                 ic.crate_code,
@@ -1196,13 +1291,12 @@ def get_transit_list(user: str):
             WHERE ic.parenttype = 'Source'
             AND ic.crate_code IS NOT NULL
             AND ic.crate_code != ''
-            AND ic.transited = 0
-            AND ({crate_verification_clause})
+            AND ({crate_where_clause})
             ORDER BY ic.modified ASC
         """
         crate_data = frappe.db.sql(crate_query, as_dict=True)
     if identifier_transit_conditions:
-        identifier_verification_clause = ' OR '.join(identifier_transit_conditions)
+        identifier_where_clause = ' OR '.join(identifier_transit_conditions)
         identifier_query = f"""
             SELECT DISTINCT 
                 ic.identifier_code,
@@ -1213,27 +1307,27 @@ def get_transit_list(user: str):
             WHERE ic.parenttype = 'Source'
             AND ic.identifier_code IS NOT NULL
             AND ic.identifier_code != ''
-            AND ic.transited = 0
-            AND ({identifier_verification_clause})
+            AND ({identifier_where_clause})
             ORDER BY ic.modified ASC
         """
         identifier_data = frappe.db.sql(identifier_query, as_dict=True)
-    crate_details = []
-    if crate_data:
-        for row in crate_data:
-            crate_details.append({
-                'crate_code': row.crate_code,
-                'source_warehouse': row.from_warehouse,
-                'target_warehouse': row.to_warehouse
-            })
-    identifier_details = []
-    if identifier_data:
-        for row in identifier_data:
-            identifier_details.append({
-                'identifier_code': row.identifier_code,
-                'source_warehouse': row.from_warehouse,
-                'target_warehouse': row.to_warehouse
-            })
+    # Format results
+    crate_details = [
+        {
+            'crate_code': row.crate_code,
+            'source_warehouse': row.from_warehouse,
+            'target_warehouse': row.to_warehouse
+        }
+        for row in crate_data
+    ]
+    identifier_details = [
+        {
+            'identifier_code': row.identifier_code,
+            'source_warehouse': row.from_warehouse,
+            'target_warehouse': row.to_warehouse
+        }
+        for row in identifier_data
+    ]
     return {
         'crate_details': crate_details,
         'identifier_details': identifier_details
@@ -1539,72 +1633,120 @@ def process_transit_request(
         frappe.db.rollback()
         raise exceptions.ValidationError(f'Error during transit: {str(e)}')
 
+
 def get_receiving_list(user: str) -> Dict:
+    """
+    Returns list of crates and identifiers available for receiving for a specific user.
+    
+    Receiving items are determined by workflow configuration:
+    - Pick → Transit → Receive → Verify: Items must be transited first, not verified
+    - Pick → Verify → Transit → Receive: Items must be verified and transited
+    - Pick → Verify → Receive: Items must be verified (no transit required)
+    
+    Only items that are ready for receiving based on their workflow are returned.
+    """
     validations.validate_exists('User', user)
-
-    stock_manager = utils.has_role(user, 'Stock Manager') 
+    # Check user permissions
+    settings = utils.get_settings()
+    stock_manager = utils.has_role(user, 'Stock Manager')
     if not stock_manager:
+        # Regular users: Restrict to their assigned branch and workflow
         user_branch = utils.get_user_branch(user)
-        target_warehouse = get_workflow_target_warehouse(user, user_branch)
-        workflow_details = utils.get_workflow_details(target_warehouse)
-
-        validate_role(user, workflow_details.receiving_user_role)
-        workflows = [workflow_details]
-
+        target_warehouse = utils.get_workflow_target_warehouse(user, user_branch)
+        # Get workflow(s) for this target warehouse
+        workflows_for_target = utils.get_workflow_details(target_warehouse=target_warehouse, settings=settings)
+        # Validate user has receiving role
+        validations.validate_permission(user, 'receiving')
+        # Convert to list if single workflow returned
+        if isinstance(workflows_for_target, list):
+            workflows = workflows_for_target
+        else:
+            workflows = [workflows_for_target]
     else:
+        # Stock Managers: Get ALL workflows (privileged access)
         workflows = utils.get_workflow_details()
-
+    # Build dynamic SQL conditions for each workflow
     crate_receiving_conditions = []
     identifier_receiving_conditions = []
-    
     for workflow in workflows:
-        base_crate_condition = f"(s.to_warehouse = '{workflow.target_warehouse}' AND ic.crate_closed = 1 AND ic.received = 0"
-        base_identifier_condition = f"(s.to_warehouse = '{workflow.target_warehouse}' AND ic.received = 0"
-        
+        target_warehouse = workflow.target_warehouse
+        picking_warehouse = workflow.picking_warehouse
+        # Base conditions: Items headed to target warehouse, closed (for crates), not received
+        base_crate_condition = (
+            f"(s.from_warehouse = '{picking_warehouse}' "
+            f"AND s.to_warehouse = '{target_warehouse}' "
+            f"AND ic.crate_closed = 1 "
+            f"AND ic.received = 0"
+        )
+        base_identifier_condition = (
+            f"(s.from_warehouse = '{picking_warehouse}' "
+            f"AND s.to_warehouse = '{target_warehouse}' "
+            f"AND ic.received = 0"
+        )
+        # Determine receiving conditions based on workflow path
+        crate_condition = None
+        identifier_condition = None
         if workflow.verification_after_receiving:
-            crate_condition = f'{base_crate_condition} AND ic.verified = 0)'
-            identifier_condition = f'{base_identifier_condition} AND ic.verified = 0)'
-
+            # WORKFLOW PATH: Pick → Transit → Receive → Verify
+            # Items must be transited, not verified, not received
+            # Verification happens AFTER receiving, so we show unverified items
+            crate_condition = (
+                f"{base_crate_condition} "
+                f"AND ic.transited = 1 "
+                f"AND ic.verified = 0)"
+            )
+            identifier_condition = (
+                f"{base_identifier_condition} "
+                f"AND ic.transited = 1 "
+                f"AND ic.verified = 0)"
+            )
+        elif workflow.transit_after_verification:
+            # WORKFLOW PATH: Pick → Verify → Transit → Receive
+            # Items must be verified, transited, not received
+            # Verification happened before transit
+            crate_condition = (
+                f"{base_crate_condition} "
+                f"AND ic.verified = 1 "
+                f"AND ic.transited = 1)"
+            )
+            identifier_condition = (
+                f"{base_identifier_condition} "
+                f"AND ic.verified = 1 "
+                f"AND ic.transited = 1)"
+            )
+        elif workflow.receiving_after_verification:
+            # WORKFLOW PATH: Pick → Verify → Receive (NO TRANSIT!)
+            # Items must be verified, no transit required, not received
+            # Transit is not part of this workflow
+            crate_condition = (
+                f"{base_crate_condition} "
+                f"AND ic.verified = 1)"
+            )
+            identifier_condition = (
+                f"{base_identifier_condition} "
+                f"AND ic.verified = 1)"
+            )
         else:
-            if workflow.receiving_after_verification:
-                crate_condition = f'{base_crate_condition} AND ic.verified = 1)'
-                identifier_condition = f'{base_identifier_condition} AND ic.verified = 1)'
-
-            else:
-                crate_condition = f'{base_crate_condition})'
-                identifier_condition = f'{base_identifier_condition})'
-        
-        picking_warehouse_stores = workflow.picking_warehouse_stores
-        transit_conditions = []
-        
-        for picking_warehouse, store in picking_warehouse_stores.items():
-            # Check if transit is required based on from and to warehouse
-            transit_required_by_source = (store != workflow.target_warehouse)
-            
-            if transit_required_by_source:
-                # Items from different stores must be transited first
-                transit_conditions.append(f"(s.from_warehouse = '{picking_warehouse}' AND ic.transited = 1)")
-            else:
-                # Items from same store can be received directly
-                transit_conditions.append(f"s.from_warehouse = '{picking_warehouse}'")
-        
-        if transit_conditions:
-            transit_condition = "({})".format(' OR '.join(transit_conditions))
-            crate_condition = crate_condition.rstrip(')') + f" AND {transit_condition})"
-            identifier_condition = identifier_condition.rstrip(')') + f" AND {transit_condition})"
-        
-        crate_receiving_conditions.append(crate_condition)
-        identifier_receiving_conditions.append(identifier_condition)
-
+            # This should never happen due to validation, but handle it gracefully
+            raise exceptions.SystemError(
+                f'Invalid workflow configuration for {target_warehouse}. '
+                'No workflow timing flag is set. Contact IT.'
+            )
+        # Add conditions if they were properly defined
+        if crate_condition:
+            crate_receiving_conditions.append(crate_condition)
+        if identifier_condition:
+            identifier_receiving_conditions.append(identifier_condition)
+    # If no receiving conditions, return empty lists
     if not crate_receiving_conditions:
         return {
             'crate_details': [],
             'identifier_details': []
         }
-
+    # Combine all workflow conditions with OR
     crate_where_clause = ' OR '.join(crate_receiving_conditions)
     identifier_where_clause = ' OR '.join(identifier_receiving_conditions)
-    
+    # Build and execute queries
     crate_query = f"""
         SELECT DISTINCT 
             ic.crate_code,
@@ -1618,7 +1760,6 @@ def get_receiving_list(user: str) -> Dict:
         AND ({crate_where_clause})
         ORDER BY ic.modified ASC
     """
-
     identifier_query = f"""
         SELECT DISTINCT 
             ic.identifier_code,
@@ -1632,32 +1773,30 @@ def get_receiving_list(user: str) -> Dict:
         AND ({identifier_where_clause})
         ORDER BY ic.modified ASC
     """
-
     crate_data = frappe.db.sql(crate_query, as_dict=True)
     identifier_data = frappe.db.sql(identifier_query, as_dict=True)
-
-    crate_details = []
-    if crate_data:
-        for row in crate_data:
-            crate_details.append({
-                'crate_code': row.crate_code,
-                'source_warehouse': row.from_warehouse,
-                'target_warehouse': row.to_warehouse
-            })
-
-    identifier_details = []
-    if identifier_data:
-        for row in identifier_data:
-            identifier_details.append({
-                'identifier_code': row.identifier_code,
-                'source_warehouse': row.from_warehouse,
-                'target_warehouse': row.to_warehouse
-            })
-
+    # Format results
+    crate_details = [
+        {
+            'crate_code': row.crate_code,
+            'source_warehouse': row.from_warehouse,
+            'target_warehouse': row.to_warehouse
+        }
+        for row in crate_data
+    ]
+    identifier_details = [
+        {
+            'identifier_code': row.identifier_code,
+            'source_warehouse': row.from_warehouse,
+            'target_warehouse': row.to_warehouse
+        }
+        for row in identifier_data
+    ]
     return {
         'crate_details': crate_details,
         'identifier_details': identifier_details
     }
+
 
 def process_receiving_request(
     user: str,

@@ -10,7 +10,7 @@ from frappe.model.document import Document
 from frappe.utils.nestedset import get_descendants_of
 from frappe.utils import cint, flt, floor, get_link_to_form
 
-from pick_stream import core, utils, exceptions, validations
+from pick_stream import utils, exceptions, validations
 
 
 class Source(Document):
@@ -32,10 +32,8 @@ class Source(Document):
 
     def update_streams(self):
         crates_status = self.get_crates_status()
-
         if not crates_status:
             return
-
         for crate_code, status in crates_status.items():
             stream_name = frappe.db.get_value(
                 'Stream', 
@@ -45,165 +43,109 @@ class Source(Document):
                 }, 
                 'name'
             )
-            
             if not stream_name:
                 stream_name = create_stream(self, crate_code)
-
             else:
                 update_stream(self, stream_name, status)
 
     def get_crates_status(self):
+        """
+        Calculate crate status based on Item Crates completion for each workflow stage.
+        
+        Status progression follows the specific workflow path for the target warehouse:
+        
+        WORKFLOW 1 (verification_after_receiving): Pick → Transit → Receive → Verify
+        - Picking: Items not closed
+        - Waiting: All closed, awaiting transit
+        - In Transit: All transited, awaiting receive
+        - Received: All received, awaiting verification
+        - Completed: All received and verified
+        
+        WORKFLOW 2 (transit_after_verification): Pick → Verify → Transit → Receive
+        - Picking: Items not closed
+        - Waiting: All closed, awaiting verification
+        - Verified: All verified, awaiting transit
+        - In Transit: All transited, awaiting receive
+        - Completed: All received
+        
+        WORKFLOW 3 (receiving_after_verification): Pick → Verify → Receive
+        - Picking: Items not closed
+        - Waiting: All closed, awaiting verification
+        - Verified: All verified, awaiting receive
+        - Completed: All received
+        
+        Partial fulfillment (some but not all items at a stage) indicates a system error
+        and triggers a reset to the previous valid state.
+        """
         crates_status = frappe._dict()
         crate_items = frappe._dict()
-
+        # Group items by crate_code
         for row in self.item_crates:
-            if row.crate_code == None:
+            if row.crate_code is None:
                 continue
-            
             if row.crate_code not in crate_items:
                 crate_items[row.crate_code] = []
-
             crate_items[row.crate_code].append(row)
-        frappe.log_error('item crates', frappe.as_json(crate_items, indent=2))
+        # Get specific workflow using both warehouses
+        workflow = utils.get_workflow_details(
+            target_warehouse=self.to_warehouse,
+            picking_warehouse=self.from_warehouse
+        )
         partially_fulfilled_crates = []
-        workflow = utils.get_workflow_details(self.to_warehouse)
-
         for crate_code, items in crate_items.items():
             total_items = len(items)
-            
+            # Count items at each stage
             closed_items = sum(1 for item in items if item.crate_closed)
             verified_items = sum(1 for item in items if item.verified)
             transited_items = sum(1 for item in items if item.transited)
             received_items = sum(1 for item in items if item.received)
-
-            if (received_items == total_items and 
-                (not workflow.verification_after_receiving or verified_items == total_items)):
-                current_status = 'Completed'  # Workflow complete - all items verified AND received
-
-            elif (received_items == total_items and 
-                workflow.verification_after_receiving):
-                current_status = 'Received'  # Received, awaiting verification
-
-            elif transited_items == total_items:
-                current_status = 'In Transit' # In Transit
-
-            elif (verified_items == total_items and 
-                workflow.receiving_after_verification):
-                current_status = 'Verified'  # Verified, awaiting receiving
-
-            elif (verified_items == total_items and 
-                workflow.transit_after_verification):
-                current_status = 'Verified'  # Verified, awaiting transit
-
-            elif closed_items == total_items:
-                current_status = 'Waiting'  # Picked, waiting for verification or transit
-
+            # Determine current status based on workflow path
+            if workflow.verification_after_receiving:
+                # WORKFLOW PATH: Pick → Transit → Receive → Verify
+                current_status = get_status_verification_after_receiving(
+                    total_items, closed_items, transited_items, 
+                    received_items, verified_items
+                )
+            elif workflow.transit_after_verification:
+                # WORKFLOW PATH: Pick → Verify → Transit → Receive
+                current_status = get_status_transit_after_verification(
+                    total_items, closed_items, verified_items,
+                    transited_items, received_items
+                )
+            elif workflow.receiving_after_verification:
+                # WORKFLOW PATH: Pick → Verify → Receive (NO TRANSIT!)
+                current_status = get_status_receiving_after_verification(
+                    total_items, closed_items, verified_items, received_items
+                )
             else:
-                current_status = 'Picking' # Still picking
-
-            is_partially_fulfilled = (
-                (0 < closed_items < total_items) or
-                (0 < verified_items < total_items) or
-                (0 < transited_items < total_items) or
-                (0 < received_items < total_items)
+                # This should never happen due to validation, but handle it gracefully
+                raise exceptions.SystemError(
+                    f'Invalid workflow configuration for {self.to_warehouse}. '
+                    'No workflow timing flag is set. Contact IT.'
+                )
+            # Check for partial fulfillment (indicates system error)
+            is_partially_fulfilled = detect_partial_fulfillment(
+                total_items, closed_items, verified_items,
+                transited_items, received_items, workflow
             )
-
             if not is_partially_fulfilled:
                 crates_status[crate_code] = current_status
-
             else:
-                # This indicates system a system failure of some sort.
-                # Reset items to previous stage to ensure forward correctness.
+                # System error detected - attempt recovery
                 partially_fulfilled_crates.append(crate_code)
-                try:
-                    stream_doc = frappe.get_doc('Stream', {
-                        'crate_code': crate_code,
-                        'source': self.name
-                    })
-                    previous_status = stream_doc.previous_status if stream_doc.previous_status else 'Picking'
-                    
-                except frappe.DoesNotExistError:
-                    # If no stream doc exists, default to 'Picking' as the previous status
-                    previous_status = 'Picking'
-
-                frappe.log_error('previous_status', previous_status)
-
-                reset_values = {
-                    'crate_closed': 0,
-                    'verified': 0,
-                    'transited': 0,
-                    'received': 0
-                }
-                
-                if previous_status == 'Waiting':
-                    reset_values['crate_closed'] = 1
-
-                elif previous_status == 'Verified':
-                    reset_values['crate_closed'] = 1
-                    reset_values['verified'] = 1
-                    
-                elif previous_status == 'In Transit':
-                    reset_values['crate_closed'] = 1
-                    reset_values['transited'] = 1
-
-                    if workflow.transit_after_verification:
-                        reset_values['verified'] = 1
-                        
-                elif previous_status == 'Received':
-                    reset_values['crate_closed'] = 1
-                    reset_values['received'] = 1
-
-                    if workflow.receiving_after_verification:
-                        reset_values['verified'] = 1
-                        
-                    if workflow.transit_required:
-                        reset_values['transited'] = 1
-                        
-                    # For 'Picking' stage, all remain 0
-
+                previous_status = get_previous_status(crate_code, self.name)
+                # Reset items to previous valid state
+                reset_values = get_reset_values(previous_status, workflow)
                 for item in items:
-                    frappe.log_error('item', frappe.as_json(item, indent=2))
-                    frappe.log_error('reset_values', frappe.as_json(reset_values, indent=2))
-
-                    # frappe.db.set_value('Item Crates', item.name, reset_values)
-                    # frappe.db.commit()
-
                     for field, value in reset_values.items():
-                            setattr(item, field, value)
-
-                    frappe.log_error('item after update', frappe.as_json(item, indent=2))
-
+                        setattr(item, field, value)
                 crates_status[crate_code] = previous_status
-
         if partially_fulfilled_crates:
             crate_list = ', '.join(partially_fulfilled_crates)
             raise exceptions.SystemError(
-                f'System Error: Crate(s) {crate_list} were partially fulfilled. Item statuses have been reset to previous value ensure data integrity.'
+                f'System Error: Crate(s) {crate_list} were partially fulfilled. '
+                'Item statuses have been reset to previous value to ensure data integrity.'
             )
-
-        saved_crate_codes = set(frappe.get_all('Item Crates',
-            filters={'parent': self.name, 'crate_code': ('is', 'set')},
-            pluck='crate_code'
-        ))
-        
-        # Only process picking crates that are saved in the database to avoid double closing
-        picking_crates = [
-            (crate_code, status) 
-            for crate_code, status in crates_status.items() 
-            if status == 'Picking' and crate_code in saved_crate_codes
-        ]
-        
-        if len(picking_crates) > 1:
-            def get_min_idx_for_crate(crate_code):
-                return min(item.idx for item in self.item_crates if item.crate_code == crate_code)
-            
-            picking_crates.sort(key=lambda x: get_min_idx_for_crate(x[0]))
-            
-            crates_to_close = picking_crates[:-1]
-            for crate_code, _ in crates_to_close:
-                utils.close_crate(crate_code, commit=False)
-                crates_status[crate_code] = 'Waiting' # Update the status after closing
-
         return crates_status
     
     def validate_stock_qty(self):
@@ -494,6 +436,245 @@ class Source(Document):
                     scanned_items[row.item_code][key]['scanned_qty'] += flt(bin_qty)
 
     
+def get_status_verification_after_receiving(
+    total, closed, transited, received, verified
+):
+    """
+    WORKFLOW: Pick → Transit → Receive → Verify
+    
+    Status sequence:
+    1. Picking: Items not closed
+    2. Waiting: All closed, none transited
+    3. In Transit: All transited, none received
+    4. Received: All received, none verified
+    5. Completed: All received AND verified
+    """
+    if received == total and verified == total:
+        return 'Completed'
+    elif received == total:
+        return 'Received'    # Awaiting verification
+    elif transited == total:
+        return 'In Transit'  # Awaiting receiving
+    elif closed == total:
+        return 'Waiting'     # Awaiting transit
+    else:
+        return 'Picking'     # Still picking
+    
+
+def get_status_transit_after_verification(
+    total, closed, verified, transited, received
+):
+    """
+    WORKFLOW: Pick → Verify → Transit → Receive
+    
+    Status sequence:
+    1. Picking: Items not closed
+    2. Waiting: All closed, none verified
+    3. Verified: All verified, none transited
+    4. In Transit: All transited, none received
+    5. Completed: All received (verification already done)
+    """
+    if received == total:
+        return 'Completed'    # All done (already verified)
+    elif transited == total:
+        return 'In Transit'   # Awaiting receiving
+    elif verified == total:
+        return 'Verified'     # Awaiting transit
+    elif closed == total:
+        return 'Waiting'      # Awaiting verification
+    else:
+        return 'Picking'      # Still picking
+
+
+def get_status_receiving_after_verification(
+    total, closed, verified, received
+):
+    """
+    WORKFLOW: Pick → Verify → Receive (NO TRANSIT!)
+    
+    Status sequence:
+    1. Picking: Some items not closed
+    2. Waiting: All closed, none/some verified
+    3. Verified: All verified, none/some received
+    4. Completed: All received (verification already done)
+    """
+    if received == total:
+        return 'Completed'    # All done (already verified)
+    elif verified == total:
+        return 'Verified'     # Awaiting receiving
+    elif closed == total:
+        return 'Waiting'      # Awaiting verification
+    else:
+        return 'Picking'      # Still picking
+
+
+def detect_partial_fulfillment(
+    total, closed, verified, transited, received, workflow
+):
+    """
+    Detect if items are partially fulfilled at any stage.
+    
+    Partial fulfillment (e.g., 3 out of 5 items verified) indicates a system error
+    where items didn't progress through the workflow together.
+    """
+    # Always check closed, verified, and received
+    partial_checks = [
+        0 < closed < total,
+        0 < verified < total,
+        0 < received < total
+    ]
+    # Only check transited if workflow includes transit
+    if workflow.verification_after_receiving or workflow.transit_after_verification:
+        partial_checks.append(0 < transited < total)
+    return any(partial_checks)
+
+
+def get_previous_status(crate_code, source_name):
+    """
+    Get the previous status from the Stream document.
+    Falls back to 'Picking' if no stream exists.
+    """
+    try:
+        stream_doc = frappe.get_doc('Stream', {
+            'crate_code': crate_code,
+            'source': source_name
+        })
+        return stream_doc.previous_status if stream_doc.previous_status else 'Picking'
+    except frappe.DoesNotExistError:
+        return 'Picking'
+
+
+def get_reset_values(previous_status, workflow):
+    """
+    Determine which flags to reset based on previous status and workflow.
+    
+    The reset values depend on what stage the crate was in before the partial fulfillment.
+    """
+    reset_values = {
+        'crate_closed': 0,
+        'verified': 0,
+        'transited': 0,
+        'received': 0
+    }
+    if previous_status == 'Waiting':
+        reset_values['crate_closed'] = 1
+    elif previous_status == 'Verified':
+        reset_values['crate_closed'] = 1
+        reset_values['verified'] = 1
+    elif previous_status == 'In Transit':
+        reset_values['crate_closed'] = 1
+        reset_values['transited'] = 1
+        # If transit comes after verification, items must be verified
+        if workflow.transit_after_verification:
+            reset_values['verified'] = 1
+    elif previous_status == 'Received':
+        reset_values['crate_closed'] = 1
+        reset_values['received'] = 1
+        # If receiving comes after verification, items must be verified
+        if workflow.receiving_after_verification or workflow.transit_after_verification:
+            reset_values['verified'] = 1
+        # If workflow includes transit, items must be transited before receiving
+        if workflow.verification_after_receiving or workflow.transit_after_verification:
+            reset_values['transited'] = 1
+    # For 'Picking' status, all remain 0
+    return reset_values
+
+
+def create_stream(source:dict, crate_code:str) -> str:
+    user = source.user
+    material_request = source.material_request
+    item_group = source.item_group
+    from_warehouse = source.from_warehouse
+    to_warehouse = source.to_warehouse
+    validations.validate_exists('User', user)
+    validations.validate_exists('Material Request', material_request)
+    validations.validate_user_assigned_to_mr(material_request, user)
+    validations.validate_user_assigned_to_item_group(user, item_group)
+    stream = frappe.new_doc('Stream')
+    stream.update({
+        'material_request': material_request,
+        'from_warehouse': from_warehouse,
+        'to_warehouse': to_warehouse,
+        'crate_code': crate_code,
+        'item_group': item_group,
+        'source': source.name,
+        'user': user
+    })
+    crate_available = utils.check_crate_availability(crate_code, user, from_stream=True) 
+    if not crate_available:
+        raise exceptions.ValidationError(f"Crate '{crate_code}' is not available. Contact Supervisor.")
+    item_crate_qty_map = {}
+    for item_crate in source.item_crates:
+        if item_crate.crate_code == crate_code:
+            item_crate_qty_map[item_crate.source_item] = item_crate.qty
+    matching_source_item_set = set(item_crate_qty_map.keys())
+    for item in source.items:
+        if item.name in matching_source_item_set:
+            crate_qty = item_crate_qty_map[item.name]
+            stream.append('items', {
+                'item_code': item.item_code,
+                'item_name': item.item_name,
+                'item_group': item.item_group,
+                'description': item.description,
+                'from_warehouse': item.from_warehouse,
+                'to_warehouse': item.to_warehouse,
+                'uom': item.uom,
+                'conversion_factor': item.conversion_factor,
+                'requested_qty': item.requested_qty,
+                'scanned_qty': crate_qty,
+                'scanned': item.scanned,
+                'source': source.name,
+                'material_request': item.material_request,
+                'material_request_item': item.material_request_item
+            })
+    frappe.db.savepoint('create_stream')
+    try:
+        stream.insert()
+        frappe.db.commit()
+        return stream.name
+    except Exception as e:
+        frappe.db.rollback()
+        raise exceptions.ValidationError(str(e))
+
+
+def update_stream(source:dict, stream_name:str, status:str) -> dict:
+    stream = frappe.get_doc('Stream', stream_name)
+    stream.update({'status': status})
+    stream.items = []
+    item_crate_qty_map = {}
+    for item_crate in source.item_crates:
+        if item_crate.crate_code == stream.crate_code:
+            item_crate_qty_map[item_crate.source_item] = item_crate.qty
+    matching_source_item_set = set(item_crate_qty_map.keys())
+    for item in source.items:
+        if item.name in matching_source_item_set:
+            crate_qty = item_crate_qty_map[item.name]
+            stream.append('items', {
+                'item_code': item.item_code,
+                'item_name': item.item_name,
+                'item_group': item.item_group,
+                'description': item.description,
+                'from_warehouse': item.from_warehouse,
+                'to_warehouse': item.to_warehouse,
+                'uom': item.uom,
+                'conversion_factor': item.conversion_factor,
+                'requested_qty': item.requested_qty,
+                'scanned_qty': crate_qty,
+                'scanned': item.scanned,
+                'source': source.name,
+                'material_request': item.material_request,
+                'material_request_item': item.material_request_item
+            })
+    frappe.db.savepoint('update_stream')
+    try:
+        stream.save()
+        frappe.db.commit()
+        return stream
+    except Exception as e:
+        frappe.db.rollback()
+        raise exceptions.ValidationError(str(e))
+
+
 def get_available_item_locations(item_code, from_warehouses, requested_qty, scanned_item_details=None):
     """
     Returns list of warehouses with available stock for an item, filtered by already-scanned quantities
@@ -653,115 +834,3 @@ def natural_sort_key(warehouse_name):
     def convert(text):
         return int(text) if text.isdigit() else text.lower()
     return [convert(c) for c in re.split(r'(\d+)', warehouse_name)]
-
-
-def create_stream(source:dict, crate_code:str) -> str:
-    user = source.user
-    material_request = source.material_request
-    item_group = source.item_group
-    from_warehouse = source.from_warehouse
-    to_warehouse = source.to_warehouse
-
-    validations.validate_exists('User', user)
-    validations.validate_exists('Material Request', material_request)
-    validations.validate_user_assigned_to_mr(material_request, user)
-    validations.validate_user_assigned_to_item_group(user, item_group)
-    
-    stream = frappe.new_doc('Stream')
-    stream.update({
-        'material_request': material_request,
-        'from_warehouse': from_warehouse,
-        'to_warehouse': to_warehouse,
-        'crate_code': crate_code,
-        'item_group': item_group,
-        'source': source.name,
-        'user': user
-    })
-
-    crate_available = utils.check_crate_availability(crate_code, user, from_stream=True) 
-    if not crate_available:
-        raise exceptions.ValidationError(f"Crate '{crate_code}' is not available. Contact Supervisor.")
-
-    item_crate_qty_map = {}
-    for item_crate in source.item_crates:
-        if item_crate.crate_code == crate_code:
-            item_crate_qty_map[item_crate.source_item] = item_crate.qty
-
-    matching_source_item_set = set(item_crate_qty_map.keys())
-
-    for item in source.items:
-        if item.name in matching_source_item_set:
-            crate_qty = item_crate_qty_map[item.name]
-
-            stream.append('items', {
-                'item_code': item.item_code,
-                'item_name': item.item_name,
-                'item_group': item.item_group,
-                'description': item.description,
-                'from_warehouse': item.from_warehouse,
-                'to_warehouse': item.to_warehouse,
-                'uom': item.uom,
-                'conversion_factor': item.conversion_factor,
-                'requested_qty': item.requested_qty,
-                'scanned_qty': crate_qty,
-                'scanned': item.scanned,
-                'source': source.name,
-                'material_request': item.material_request,
-                'material_request_item': item.material_request_item
-            })
-
-    frappe.db.savepoint('create_stream')
-
-    try:
-        stream.insert()
-        frappe.db.commit()
-        return stream.name
-
-    except Exception as e:
-        frappe.db.rollback()
-        raise exceptions.ValidationError(str(e))
-
-def update_stream(source:dict, stream_name:str, status:str) -> dict:
-    stream = frappe.get_doc('Stream', stream_name)
-    stream.update({'status': status})
-
-    stream.items = []
-
-    item_crate_qty_map = {}
-    for item_crate in source.item_crates:
-        if item_crate.crate_code == stream.crate_code:
-            item_crate_qty_map[item_crate.source_item] = item_crate.qty
-
-    matching_source_item_set = set(item_crate_qty_map.keys())
-
-    for item in source.items:
-        if item.name in matching_source_item_set:
-            crate_qty = item_crate_qty_map[item.name]
-
-            stream.append('items', {
-                'item_code': item.item_code,
-                'item_name': item.item_name,
-                'item_group': item.item_group,
-                'description': item.description,
-                'from_warehouse': item.from_warehouse,
-                'to_warehouse': item.to_warehouse,
-                'uom': item.uom,
-                'conversion_factor': item.conversion_factor,
-                'requested_qty': item.requested_qty,
-                'scanned_qty': crate_qty,
-                'scanned': item.scanned,
-                'source': source.name,
-                'material_request': item.material_request,
-                'material_request_item': item.material_request_item
-            })
-
-    frappe.db.savepoint('update_stream')
-
-    try:
-        stream.save()
-        frappe.db.commit()
-        return stream
-
-    except Exception as e:
-        frappe.db.rollback()
-        raise exceptions.ValidationError(str(e))

@@ -1275,83 +1275,77 @@ def get_crate_details_(
     })
 
 
-def get_workflow_details(target_warehouse:str=None, settings:Dict=None) -> Union[Dict, List[Dict]]:
+def get_workflow_details(target_warehouse:str=None, picking_warehouse:str=None, settings:Dict=None):
     """
-    Returns workflow configuration details.
+    Returns workflow configuration details as defined in the Pick Stream Settings.
     
+    Multiple workflows can exist for the same target_warehouse with different
+    picking_warehouse sources. Provide both parameters when you need a specific
+    workflow path.
+
     Args:
-        target_warehouse: If provided, returns only the workflow for this warehouse
+        target_warehouse: If provided, filters workflows by this destination warehouse
+        picking_warehouse: If provided, filters workflows by this source warehouse
         settings: Pick Stream Settings document (fetched if not provided)
-    
-    Returns:
-        Single workflow dict if target_warehouse specified, otherwise list of all active workflows
-    
-    Note:
-        Since each workflow now represents a single path (picking_warehouse → target_warehouse),
-        the picking_warehouse_stores mapping is no longer needed. Transit requirement is now
-        determined by the workflow flags (transit_after_verification, etc.) rather than by
-        comparing warehouse stores.
-    """
+    """    
     if settings is None:
-        settings = get_settings()
+        settings = frappe.get_single('Pick Stream Settings')
     
     active_workflows = [row for row in settings.workflow_settings if row.is_active]
     if not active_workflows:
-        raise exceptions.ValidationError(
+        raise exceptions.SystemError(
             'No active workflows found. Contact IT.'
         )
+    # Filter by target_warehouse if provided
     if target_warehouse:
         validations.validate_exists('Warehouse', target_warehouse)
-        matching_row = next(
-            (row for row in active_workflows if row.target_warehouse == target_warehouse),
-            None
-        )
-        if matching_row is None:
+        matching_workflows = [
+            row for row in active_workflows 
+            if row.target_warehouse == target_warehouse
+        ]
+        if not matching_workflows:
             raise exceptions.ValidationError(
-                f'No active workflow found for {target_warehouse}. Contact IT.'
+                f'No active workflow found for target warehouse {target_warehouse}. Contact IT.'
             )
-        workflows = [matching_row]
+        workflows = matching_workflows
     else:
         workflows = active_workflows
+    # Filter by picking_warehouse if provided
+    if picking_warehouse:
+        validations.validate_exists('Warehouse', picking_warehouse)
+        matching_workflows = [
+            row for row in workflows 
+            if row.picking_warehouse == picking_warehouse
+        ]
+        if not matching_workflows:
+            if target_warehouse:
+                raise exceptions.ValidationError(
+                    f'No active workflow found from {picking_warehouse} to {target_warehouse}. Contact IT.'
+                )
+            else:
+                raise exceptions.ValidationError(
+                    f'No active workflow found for picking warehouse {picking_warehouse}. Contact IT.'
+                )
+        workflows = matching_workflows
+    # Build result
     result = []
     for row in workflows:
-        # Collect verification branches
-        verification_branches = {
-            br for br in [
-                row.verification_branch_1,
-                row.verification_branch_2,
-                row.verification_branch_3
-            ] if br
-        }
-        # Collect picking warehouse to branch mappings
-        picking_warehouse_branches = {
-            wh: branch for wh, branch in [
-                (row.picking_warehouse_1, row.picking_user_branch_1),
-                (row.picking_warehouse_2, row.picking_user_branch_2),
-                (row.picking_warehouse_3, row.picking_user_branch_3)
-            ] if wh
-        }
-        # Collect all picking warehouses for this workflow
-        picking_warehouses = [
-            wh for wh in [
-                row.picking_warehouse_1,
-                row.picking_warehouse_2,
-                row.picking_warehouse_3
-            ] if wh
-        ]
         result.append(frappe._dict({
             'target_warehouse': row.target_warehouse,
-            'picking_warehouses': picking_warehouses,
-            'picking_warehouse_branches': picking_warehouse_branches,
-            'verification_branches': verification_branches,
+            'picking_warehouse': row.picking_warehouse,
+            'picking_user_branch': row.picking_user_branch,
+            'verification_branch': row.verification_branch,
             'verification_after_receiving': row.verification_after_receiving,
             'transit_after_verification': row.transit_after_verification,
             'transit_warehouse': row.transit_warehouse,
             'receiving_after_verification': row.receiving_after_verification,
             'send_notifications': row.send_notifications
         }))
-    
-    return result[0] if target_warehouse else result
+    # Return single workflow if both warehouses specified, otherwise return list
+    if target_warehouse and picking_warehouse:
+        return result[0]  # Should only be one exact match
+    else:
+        return result
 
 
 def has_role(user:str, role:str) -> bool:
