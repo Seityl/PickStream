@@ -1276,9 +1276,25 @@ def get_crate_details_(
 
 
 def get_workflow_details(target_warehouse:str=None, settings:Dict=None) -> Union[Dict, List[Dict]]:
-    """Will return all workflows if target warehouse is not passed (For privileged users)"""
+    """
+    Returns workflow configuration details.
+    
+    Args:
+        target_warehouse: If provided, returns only the workflow for this warehouse
+        settings: Pick Stream Settings document (fetched if not provided)
+    
+    Returns:
+        Single workflow dict if target_warehouse specified, otherwise list of all active workflows
+    
+    Note:
+        Since each workflow now represents a single path (picking_warehouse → target_warehouse),
+        the picking_warehouse_stores mapping is no longer needed. Transit requirement is now
+        determined by the workflow flags (transit_after_verification, etc.) rather than by
+        comparing warehouse stores.
+    """
     if settings is None:
         settings = get_settings()
+    
     active_workflows = [row for row in settings.workflow_settings if row.is_active]
     if not active_workflows:
         raise exceptions.ValidationError(
@@ -1299,6 +1315,7 @@ def get_workflow_details(target_warehouse:str=None, settings:Dict=None) -> Union
         workflows = active_workflows
     result = []
     for row in workflows:
+        # Collect verification branches
         verification_branches = {
             br for br in [
                 row.verification_branch_1,
@@ -1306,6 +1323,7 @@ def get_workflow_details(target_warehouse:str=None, settings:Dict=None) -> Union
                 row.verification_branch_3
             ] if br
         }
+        # Collect picking warehouse to branch mappings
         picking_warehouse_branches = {
             wh: branch for wh, branch in [
                 (row.picking_warehouse_1, row.picking_user_branch_1),
@@ -1313,17 +1331,18 @@ def get_workflow_details(target_warehouse:str=None, settings:Dict=None) -> Union
                 (row.picking_warehouse_3, row.picking_user_branch_3)
             ] if wh
         }
-        picking_warehouse_stores = {
-            wh: store for wh, store in [
-                (row.picking_warehouse_1, row.picking_store_1),
-                (row.picking_warehouse_2, row.picking_store_2),
-                (row.picking_warehouse_3, row.picking_store_3)
+        # Collect all picking warehouses for this workflow
+        picking_warehouses = [
+            wh for wh in [
+                row.picking_warehouse_1,
+                row.picking_warehouse_2,
+                row.picking_warehouse_3
             ] if wh
-        }
+        ]
         result.append(frappe._dict({
             'target_warehouse': row.target_warehouse,
+            'picking_warehouses': picking_warehouses,
             'picking_warehouse_branches': picking_warehouse_branches,
-            'picking_warehouse_stores': picking_warehouse_stores,
             'verification_branches': verification_branches,
             'verification_after_receiving': row.verification_after_receiving,
             'transit_after_verification': row.transit_after_verification,
@@ -1331,6 +1350,7 @@ def get_workflow_details(target_warehouse:str=None, settings:Dict=None) -> Union
             'receiving_after_verification': row.receiving_after_verification,
             'send_notifications': row.send_notifications
         }))
+    
     return result[0] if target_warehouse else result
 
 

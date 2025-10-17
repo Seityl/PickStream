@@ -597,8 +597,8 @@ def get_verification_list(user:str) -> Dict:
         workflows = utils.get_workflow_details()
     # Build dynamic SQL conditions for each workflow
     # Conditions vary based on workflow configuration (verification timing and transit requirements)
-    crate_receiving_conditions = []
-    identifier_receiving_conditions = []
+    crate_verification_conditions = []
+    identifier_verification_conditions = []
     for workflow in workflows:
         # Base conditions: Items must be headed to the workflow's target warehouse and not yet verified
         base_crate_condition = f"(s.to_warehouse = '{workflow.target_warehouse}' AND ic.crate_closed = 1 AND ic.verified = 0"
@@ -612,7 +612,7 @@ def get_verification_list(user:str) -> Dict:
         # 1. verification_after_receiving: Items must be received first (received = 1)
         #    Use case: Verify items AFTER they physically arrive
         # 2. receiving_after_verification: Items verified before receiving (received = 0)
-        #    Use case: Pre-verify items before transit and receive after approval
+        #    Use case: Verify items and receive after approval
         crate_condition = None
         identifier_condition = None
         if workflow.verification_after_receiving:
@@ -624,20 +624,21 @@ def get_verification_list(user:str) -> Dict:
             crate_condition = f'{base_crate_condition} AND ic.received = 0)'
             identifier_condition = f'{base_identifier_condition} AND ic.received = 0)'
         else:
-            # If neither flag is set, close the base condition without additional filters
-            # This is a fallback case - typically one of the flags should be set
-            crate_condition = f'{base_crate_condition})'
-            identifier_condition = f'{base_identifier_condition})'
+            # This should never happen due to validation, but handle it gracefully
+            raise exceptions.SystemError(
+                f'Invalid workflow configuration for {workflow.target_warehouse}. '
+                'No verification timing flag is set. Contact IT.'
+            )
         # Only add conditions if they were properly defined
         if crate_condition:
-            crate_receiving_conditions.append(crate_condition)
+            crate_verification_conditions.append(crate_condition)
         if identifier_condition:
-            identifier_receiving_conditions.append(identifier_condition)
+            identifier_verification_conditions.append(identifier_condition)
     # Combine all workflow conditions with OR
     # This allows privileged users to see items from multiple workflows,
     # while regular users will only have conditions for their single workflow
-    crate_where_clause = ' OR '.join(crate_receiving_conditions)
-    identifier_where_clause = ' OR '.join(identifier_receiving_conditions)
+    crate_where_clause = ' OR '.join(crate_verification_conditions)
+    identifier_where_clause = ' OR '.join(identifier_verification_conditions)
     crate_query = f"""
         SELECT DISTINCT 
             ic.crate_code,
@@ -1140,8 +1141,8 @@ def get_transit_list(user: str):
         validations.validate_permission(user, 'transit')
     workflow_details = utils.get_workflow_details()
     workflows = workflow_details
-    crate_verification_conditions = []
-    identifier_verification_conditions = []
+    crate_transit_conditions = []
+    identifier_transit_conditions = []
     for workflow in workflows:
         target_warehouse = workflow.target_warehouse
         picking_warehouse_stores = workflow.picking_warehouse_stores
@@ -1151,6 +1152,7 @@ def get_transit_list(user: str):
             if store != target_warehouse
         ]
         if workflow.transit_after_verification:
+            # Pick → Verify → Transit → Receive
             crate_condition_parts = []
             identifier_condition_parts = []
             for warehouse in transit_warehouses:
@@ -1161,9 +1163,9 @@ def get_transit_list(user: str):
                     f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.verified = 1 AND ic.received = 0)"
                 )
             if crate_condition_parts:
-                crate_verification_conditions.append(f"({' OR '.join(crate_condition_parts)})")
+                crate_transit_conditions.append(f"({' OR '.join(crate_condition_parts)})")
             if identifier_condition_parts:
-                identifier_verification_conditions.append(f"({' OR '.join(identifier_condition_parts)})")
+                identifier_transit_conditions.append(f"({' OR '.join(identifier_condition_parts)})")
         else:
             crate_condition_parts = []
             identifier_condition_parts = []
@@ -1175,15 +1177,15 @@ def get_transit_list(user: str):
                     f"(s.from_warehouse = '{warehouse}' AND s.to_warehouse = '{target_warehouse}' AND ic.received = 0)"
                 )
             if crate_condition_parts:
-                crate_verification_conditions.append(f"({' OR '.join(crate_condition_parts)})")
+                crate_transit_conditions.append(f"({' OR '.join(crate_condition_parts)})")
             if identifier_condition_parts:
-                identifier_verification_conditions.append(f"({' OR '.join(identifier_condition_parts)})")
-    if not crate_verification_conditions and not identifier_verification_conditions:
+                identifier_transit_conditions.append(f"({' OR '.join(identifier_condition_parts)})")
+    if not crate_transit_conditions and not identifier_transit_conditions:
         raise exceptions.SystemError('No transit conditions found')
     crate_data = []
     identifier_data = []
-    if crate_verification_conditions:
-        crate_verification_clause = ' OR '.join(crate_verification_conditions)
+    if crate_transit_conditions:
+        crate_verification_clause = ' OR '.join(crate_transit_conditions)
         crate_query = f"""
             SELECT DISTINCT 
                 ic.crate_code,
@@ -1199,8 +1201,8 @@ def get_transit_list(user: str):
             ORDER BY ic.modified ASC
         """
         crate_data = frappe.db.sql(crate_query, as_dict=True)
-    if identifier_verification_conditions:
-        identifier_verification_clause = ' OR '.join(identifier_verification_conditions)
+    if identifier_transit_conditions:
+        identifier_verification_clause = ' OR '.join(identifier_transit_conditions)
         identifier_query = f"""
             SELECT DISTINCT 
                 ic.identifier_code,

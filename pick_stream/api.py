@@ -146,7 +146,7 @@ def submit_verification_request(
 @handler(methods=['GET'])
 def get_transit_list_view(user:str) -> Dict:
     """
-    Returns list of items available for verification for a specific user.
+    Returns list of items available for transit for a specific user.
     """
     transit_list = core.get_transit_list(user)
     return generate_response(200, None, transit_list)
